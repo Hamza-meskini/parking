@@ -1,0 +1,62 @@
+# Rôle
+Tu es un Ingénieur Logiciel expert en Python et en théorie des automates. Tu dois implémenter le "Projet 8 : Automate de Gestion d'un Parking Intelligent" pour un projet d'école d'ingénieur.
+
+# Consigne Globale
+Génère le code source complet du projet réparti en 3 fichiers distincts. Le code doit être propre, documenté (docstrings), et respecter strictement la Programmation Orientée Objet.
+
+# Structure des Fichiers Attendue
+1. `automate_base.py` : Les classes génériques (Moteur de l'automate).
+2. `parking_system.py` : La logique métier du parking (hérite ou utilise le moteur).
+3. `main.py` : Un script de simulation pour tester le flux complet.
+
+---
+
+## 1. Spécifications pour `automate_base.py`
+Ce fichier doit implémenter strictement les classes définies dans le sujet du projet.
+* **Class Etat** :
+    * Attributs : `id_etat` (int), `label_etat` (str), `type_etat` (str: "initial", "final", "normal", "puits"), `transitions` (dict).
+    * Méthode : `__repr__` pour un affichage propre.
+* **Class Transition** :
+    * Attributs : `etat_source` (Etat), `etat_dest` (Etat), `etiquette` (str, l'événement).
+* **Class Automate** :
+    * Attributs : `list_etats` (dict id->Etat), `list_transitions` (list), `etat_courant` (Etat).
+    * Méthodes :
+        * `ajouter_etat(etat)` : Ajoute l'état et définit `etat_courant` si c'est l'initial.
+        * `ajouter_transition(id_src, id_dst, evt)` : Crée l'objet Transition et met à jour le dictionnaire de l'état source.
+        * `transition(evt)` : Tente de passer à l'état suivant si l'événement est valide pour l'état courant. Retourne True/False. Affiche des logs console explicites (ex: "[Transition] DISPO -> IDENTIF").
+
+## 2. Spécifications pour `parking_system.py`
+Ce fichier contient la classe `ParkingSystem` qui utilise `Automate`.
+* **Initialisation** : Accepte `places_totales` (int) et `tarif_horaire` (float). Initialise `places_libres`.
+* **Construction de l'Automate** : Crée les états et transitions suivants dans le constructeur :
+    * **États** :
+        * 0: DISPONIBLE (Initial)
+        * 1: IDENTIFICATION
+        * 2: VERIFICATION_ACCES
+        * 3: BARRIERE_ENTREE_OUVERTE
+        * 4: STATIONNEMENT_EN_COURS
+        * 5: CALCUL_TARIF
+        * 6: ATTENTE_PAIEMENT
+        * 7: BARRIERE_SORTIE_OUVERTE
+        * 99: COMPLET (État spécial)
+    * **Transitions (Logique)** :
+        * Entrée : 0->1 ("detecter_entree"), 1->2 ("lire_plaque"), 2->3 ("acces_valide"), 3->4 ("vehicule_entre").
+        * Sortie : 4->5 ("demande_sortie"), 5->6 ("paiement_requis"), 5->7 ("abonne_gratuit"), 6->7 ("paiement_valide"), 7->0 ("vehicule_sorti").
+        * Gestion Complet : 0->99 ("parking_plein"), 99->0 ("place_liberee").
+* **Méthodes Métier** :
+    * `gerer_entree()` : Vérifie `places_libres`. Si > 0, exécute la chaîne de transitions d'entrée. Sinon, déclenche "parking_plein".
+    * `gerer_sortie(est_abonne: bool)` : Exécute la chaîne de sortie. Si `est_abonne` est True, bypass le paiement (transition "abonne_gratuit"). Sinon passe par "paiement_requis". Incrémente `places_libres` à la fin.
+
+## 3. Spécifications pour `main.py`
+* Importe `ParkingSystem`.
+* Instancie un parking avec **3 places seulement** (pour tester la saturation vite).
+* **Scénario de Test** :
+    1.  Faire entrer une voiture (Visiteur).
+    2.  Faire entrer une voiture (Abonné).
+    3.  Faire entrer une 3ème voiture (Parking devient COMPLET).
+    4.  Essayer de faire entrer une 4ème voiture (Doit échouer/Refuser).
+    5.  Faire sortir la 1ère voiture (Paiement requis).
+    6.  Vérifier que le parking n'est plus complet et qu'une nouvelle voiture peut entrer.
+
+---
+Génère le code complet maintenant.
