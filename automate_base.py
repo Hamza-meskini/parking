@@ -1,4 +1,3 @@
-# automate_base.py
 
 class Etat:
     """Représente un état dans l'automate fini."""
@@ -11,12 +10,14 @@ class Etat:
     def __repr__(self):
         return f"Etat({self.id_etat}: {self.label_etat} [{self.type_etat}])"
 
+
 class Transition:
     """Représente le passage d'un état à un autre via un événement."""
     def __init__(self, etat_source, etat_dest, etiquette):
         self.etat_source = etat_source
         self.etat_dest = etat_dest
         self.etiquette = etiquette      # L'événement déclencheur
+
 
 class Automate:
     """Moteur générique de l'automate à états finis."""
@@ -44,7 +45,6 @@ class Automate:
             
             # Mise à jour de la logique de l'état source
             src.transitions[evt] = id_dst
-            # print(f"[Automate] Transition ajoutée: '{evt}': {src.label_etat} -> {dst.label_etat}")
         else:
             print(f"[Erreur] État source {id_src} ou destination {id_dst} inexistant.")
 

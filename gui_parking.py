@@ -2,7 +2,6 @@ import sys
 import random
 import time
 import networkx as nx
-import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
@@ -88,6 +87,8 @@ class ParkingWorker(QObject):
 
 # --- CLASS 2 : FENÊTRE GRAPHIQUE (Layout Schéma Officiel) ---
 class GraphWindow(QWidget):
+    closed = pyqtSignal()
+
     def __init__(self, automate):
         super().__init__()
         self.setWindowTitle("Moniteur Temps Réel (Automate)")
@@ -208,6 +209,10 @@ class GraphWindow(QWidget):
         ax.axis('off')
         self.canvas.draw()
 
+    def closeEvent(self, event):
+        self.closed.emit()
+        super().closeEvent(event)
+
 
 # --- CLASS 3 : DASHBOARD PRINCIPAL ---
 class ParkingDashboard(QMainWindow):
@@ -280,16 +285,16 @@ class ParkingDashboard(QMainWindow):
         b_sortie.setStyleSheet("background-color: #e67e22; padding: 15px; font-weight: bold;")
         b_sortie.clicked.connect(self.worker.sortie_auto)
         
-        b_graph = QPushButton("Voir Automate (Graphe)")
-        b_graph.setStyleSheet("background-color: #7f8c8d; padding: 15px; font-weight: bold; border: 1px solid white;")
-        b_graph.clicked.connect(self.open_graph_window)
+        self.b_graph = QPushButton("Voir Automate (Graphe)")
+        self.b_graph.setStyleSheet("background-color: #7f8c8d; padding: 15px; font-weight: bold; border: 1px solid white;")
+        self.b_graph.clicked.connect(self.open_graph_window)
         
         btns.addWidget(b_visiteur)
         btns.addWidget(b_abonne)
         btns.addSpacing(10)
         btns.addWidget(b_sortie)
         btns.addSpacing(10)
-        btns.addWidget(b_graph)
+        btns.addWidget(self.b_graph)
         btns.addStretch()
         
         self.logs = QTextEdit()
@@ -316,7 +321,9 @@ class ParkingDashboard(QMainWindow):
         return frame
 
     def open_graph_window(self):
+        self.b_graph.setEnabled(False)
         self.graph_window = GraphWindow(self.worker.system.automate)
+        self.graph_window.closed.connect(lambda: self.b_graph.setEnabled(True))
         self.graph_window.show()
 
     def update_dashboard(self, stats):
@@ -330,9 +337,9 @@ class ParkingDashboard(QMainWindow):
         lbl_etat = stats.get("etat_automate", "???")
         self.lbl_system_status.setText(lbl_etat)
         if lbl_etat == "COMPLET":
-             self.lbl_system_status.setStyleSheet("background-color: #e74c3c; padding: 10px; border-radius: 5px;")
+            self.lbl_system_status.setStyleSheet("background-color: #e74c3c; padding: 10px; border-radius: 5px;")
         else:
-             self.lbl_system_status.setStyleSheet("background-color: #2ecc71; padding: 10px; border-radius: 5px;")
+            self.lbl_system_status.setStyleSheet("background-color: #2ecc71; padding: 10px; border-radius: 5px;")
         
         # Mise à jour Graphe
         if hasattr(self, 'graph_window') and self.graph_window.isVisible():
@@ -343,16 +350,16 @@ class ParkingDashboard(QMainWindow):
         self.logs.verticalScrollBar().setValue(self.logs.verticalScrollBar().maximum())
 
     def update_place(self, idx, status):
-        l = self.places_widgets[idx]
+        lbl_place = self.places_widgets[idx]
         if status == 1:
-            l.setStyleSheet("background-color: #2ecc71; color: white; border-radius: 8px;")
-            l.setText(f"P-{idx+1}\nLIBRE")
+            lbl_place.setStyleSheet("background-color: #2ecc71; color: white; border-radius: 8px;")
+            lbl_place.setText(f"P-{idx+1}\nLIBRE")
         elif status == 0:
-            l.setStyleSheet("background-color: #e74c3c; color: white; border-radius: 8px;")
-            l.setText(f"P-{idx+1}\nOCCUPÉ")
+            lbl_place.setStyleSheet("background-color: #e74c3c; color: white; border-radius: 8px;")
+            lbl_place.setText(f"P-{idx+1}\nOCCUPÉ")
         elif status == -1:
-            l.setStyleSheet("background-color: #f39c12; color: white; border-radius: 8px;")
-            l.setText(f"P-{idx+1}\nPAIEMENT")
+            lbl_place.setStyleSheet("background-color: #f39c12; color: white; border-radius: 8px;")
+            lbl_place.setText(f"P-{idx+1}\nPAIEMENT")
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

@@ -1,4 +1,4 @@
-# parking_system.py
+
 from automate_base import Automate, Etat
 
 class ParkingSystem:
@@ -28,15 +28,12 @@ class ParkingSystem:
             Etat(7, "BARRIERE_SORTIE_OUVERTE"),
             Etat(99, "COMPLET")
         ]
-        for e in etats: self.automate.ajouter_etat(e)
+        for e in etats: 
+            self.automate.ajouter_etat(e)
 
-        # --- MODIFICATION ICI : On suit le schéma (Cycle unique) ---
         self.automate.ajouter_transition(0, 1, "detecter_entree")
         self.automate.ajouter_transition(1, 2, "lire_plaque")
         self.automate.ajouter_transition(2, 3, "acces_valide")
-        
-        # AVANT : 3 -> 0 (Retour direct)
-        # APRÈS : 3 -> 4 (On va vers STATIONNEMENT comme sur le schéma)
         self.automate.ajouter_transition(3, 4, "vehicule_entre") 
         
         # Transitions de Sortie
@@ -44,7 +41,7 @@ class ParkingSystem:
         self.automate.ajouter_transition(5, 6, "paiement_requis")
         self.automate.ajouter_transition(5, 7, "abonne_gratuit")
         self.automate.ajouter_transition(6, 7, "paiement_valide")
-        self.automate.ajouter_transition(7, 0, "vehicule_sorti") # Retour boucle
+        self.automate.ajouter_transition(7, 0, "vehicule_sorti")
         
         # Gestion Saturation
         self.automate.ajouter_transition(0, 99, "parking_plein")
@@ -65,17 +62,17 @@ class ParkingSystem:
         }
 
     def gerer_entree(self, est_abonne=False, pause_callback=None):
-        if est_abonne: self.total_abonnes += 1
-        else: self.total_visiteurs += 1
+        if est_abonne: 
+            self.total_abonnes += 1
+        else: 
+            self.total_visiteurs += 1
 
         print("\n--- TENTATIVE D'ENTREE ---")
         if self.places_libres > 0:
-            # ASTUCE : Si l'automate est "au repos" sur STATIONNEMENT (4) ou COMPLET (99),
+            # Si l'automate est "au repos" sur STATIONNEMENT (4) ou COMPLET (99),
             # on le remet à DISPONIBLE (0) pour accepter la nouvelle voiture.
             current_id = self.automate.etat_courant.id_etat
             if current_id == 99 or current_id == 4:
-                 # On force le retour à l'état initial sans transition visible
-                 # pour simuler que la barrière est prête pour le suivant
                  self.automate.etat_courant = self.automate.list_etats[0]
 
             if self.automate.transition("detecter_entree"):
@@ -88,15 +85,11 @@ class ParkingSystem:
                 if pause_callback: pause_callback()
                 
                 self.automate.transition("vehicule_entre") 
-                # L'automate finit maintenant sur l'état 4 (STATIONNEMENT)
-                # C'est parfait pour le visuel !
                 
                 self.places_libres -= 1
                 print(f"[Succès] Véhicule garé. Places: {self.places_libres}")
                 
                 if self.places_libres == 0:
-                    # Si on est plein, on force l'affichage COMPLET
-                    # Note : on doit revenir à 0 pour aller vers 99
                     self.automate.etat_courant = self.automate.list_etats[0]
                     self.automate.transition("parking_plein")
         else:
@@ -107,7 +100,6 @@ class ParkingSystem:
     def gerer_sortie(self, est_abonne=False, pause_callback=None):
         print(f"\n--- SORTIE (Abonné: {est_abonne}) ---")
         
-        # On s'assure qu'on part bien de l'état STATIONNEMENT
         self.automate.etat_courant = self.automate.list_etats[4]
         
         self.automate.transition("demande_sortie")
