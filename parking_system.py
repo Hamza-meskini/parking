@@ -1,124 +1,132 @@
 # parking_system.py
 from automate_base import Automate, Etat
-import random # Nécessaire pour la simulation aléatoire dans le GUI
 
 class ParkingSystem:
-    def __init__(self, places_totales=50, tarif_horaire=2.5):
+    def __init__(self, places_totales=10, tarif_horaire=2.5):
         self.places_totales = places_totales
         self.places_libres = places_totales
         self.tarif_horaire = tarif_horaire
         
-        # Initialisation du moteur
+        # Stats financières
+        self.recettes_totales = 0.0
+        self.total_visiteurs = 0
+        self.total_abonnes = 0
+        
         self.automate = Automate()
         self._construire_automate()
-        
-        print(f"[ParkingSystem] Initialisé : {places_totales} places, {tarif_horaire}€/h.")
+        print(f"[ParkingSystem] Initialisé : {places_totales} places.")
 
     def _construire_automate(self):
-        """Définit les états et transitions spécifiques au Parking (Projet 8)."""
-        # 1. Création des États
         etats = [
             Etat(0, "DISPONIBLE", "initial"),
             Etat(1, "IDENTIFICATION"),
             Etat(2, "VERIFICATION_ACCES"),
             Etat(3, "BARRIERE_ENTREE_OUVERTE"),
-            Etat(4, "STATIONNEMENT_EN_COURS"), # État virtuel pour le départ d'une voiture
+            Etat(4, "STATIONNEMENT"), # Correspond à "VÉHICULE GARÉ"
             Etat(5, "CALCUL_TARIF"),
             Etat(6, "ATTENTE_PAIEMENT"),
             Etat(7, "BARRIERE_SORTIE_OUVERTE"),
             Etat(99, "COMPLET")
         ]
-        
-        for e in etats:
-            self.automate.ajouter_etat(e)
+        for e in etats: self.automate.ajouter_etat(e)
 
-        # 2. Définition des Transitions (CORRIGÉ POUR BOUCLER)
-        # Séquence d'Entrée
+        # --- MODIFICATION ICI : On suit le schéma (Cycle unique) ---
         self.automate.ajouter_transition(0, 1, "detecter_entree")
         self.automate.ajouter_transition(1, 2, "lire_plaque")
         self.automate.ajouter_transition(2, 3, "acces_valide")
-        # MODIFICATION ICI : Une fois entré, on retourne à DISPONIBLE (0) pour la prochaine voiture
-        self.automate.ajouter_transition(3, 0, "vehicule_entre") 
+        
+        # AVANT : 3 -> 0 (Retour direct)
+        # APRÈS : 3 -> 4 (On va vers STATIONNEMENT comme sur le schéma)
+        self.automate.ajouter_transition(3, 4, "vehicule_entre") 
+        
+        # Transitions de Sortie
+        self.automate.ajouter_transition(4, 5, "demande_sortie")
+        self.automate.ajouter_transition(5, 6, "paiement_requis")
+        self.automate.ajouter_transition(5, 7, "abonne_gratuit")
+        self.automate.ajouter_transition(6, 7, "paiement_valide")
+        self.automate.ajouter_transition(7, 0, "vehicule_sorti") # Retour boucle
         
         # Gestion Saturation
         self.automate.ajouter_transition(0, 99, "parking_plein")
         self.automate.ajouter_transition(99, 0, "place_liberee")
-        
-        # Séquence de Sortie (Démarre artificiellement de l'état 4)
-        self.automate.ajouter_transition(4, 5, "demande_sortie")
-        self.automate.ajouter_transition(5, 6, "paiement_requis")
-        self.automate.ajouter_transition(5, 7, "abonne_gratuit") # Bypass paiement
-        self.automate.ajouter_transition(6, 7, "paiement_valide")
-        self.automate.ajouter_transition(7, 0, "vehicule_sorti")
 
     def get_status(self):
-        """Renvoie l'état courant pour l'interface graphique"""
         etat_label = self.automate.etat_courant.label_etat
-        # Si l'automate est revenu à 0 mais qu'on est plein, on affiche COMPLET visuellement
         if self.places_libres == 0: 
             etat_label = "COMPLET"
             
         return {
             "etat_automate": etat_label,
             "places_libres": self.places_libres,
-            "places_totales": self.places_totales
+            "places_totales": self.places_totales,
+            "recettes": self.recettes_totales,
+            "visiteurs": self.total_visiteurs,
+            "abonnes": self.total_abonnes
         }
 
-    def gerer_entree(self):
-        """Simule le processus complet d'entrée d'un véhicule."""
-        print("\n--- TENTATIVE D'ENTREE ---")
-        
-        # Si on était bloqué sur l'état virtuel COMPLET, on reset si de la place s'est libérée
-        if self.places_libres > 0 and self.automate.etat_courant.id_etat == 99:
-             self.automate.transition("place_liberee")
+    def gerer_entree(self, est_abonne=False, pause_callback=None):
+        if est_abonne: self.total_abonnes += 1
+        else: self.total_visiteurs += 1
 
-        # Vérification métier
+        print("\n--- TENTATIVE D'ENTREE ---")
         if self.places_libres > 0:
-            succes = self.automate.transition("detecter_entree")
-            if succes:
-                # Simulation rapide des étapes intermédiaires
+            # ASTUCE : Si l'automate est "au repos" sur STATIONNEMENT (4) ou COMPLET (99),
+            # on le remet à DISPONIBLE (0) pour accepter la nouvelle voiture.
+            current_id = self.automate.etat_courant.id_etat
+            if current_id == 99 or current_id == 4:
+                 # On force le retour à l'état initial sans transition visible
+                 # pour simuler que la barrière est prête pour le suivant
+                 self.automate.etat_courant = self.automate.list_etats[0]
+
+            if self.automate.transition("detecter_entree"):
+                if pause_callback: pause_callback()
+                
                 self.automate.transition("lire_plaque")
+                if pause_callback: pause_callback()
+                
                 self.automate.transition("acces_valide")
-                self.automate.transition("vehicule_entre") # Retourne à 0 (DISPONIBLE)
+                if pause_callback: pause_callback()
+                
+                self.automate.transition("vehicule_entre") 
+                # L'automate finit maintenant sur l'état 4 (STATIONNEMENT)
+                # C'est parfait pour le visuel !
                 
                 self.places_libres -= 1
-                print(f"[Succès] Véhicule garé. Places restantes: {self.places_libres}")
+                print(f"[Succès] Véhicule garé. Places: {self.places_libres}")
                 
-                # Si le parking devient plein juste après cette entrée
                 if self.places_libres == 0:
-                    print("[Alerte] Le parking est maintenant COMPLET.")
+                    # Si on est plein, on force l'affichage COMPLET
+                    # Note : on doit revenir à 0 pour aller vers 99
+                    self.automate.etat_courant = self.automate.list_etats[0]
                     self.automate.transition("parking_plein")
-            else:
-                print(f"[Info] Système occupé ou état incorrect ({self.automate.etat_courant.label_etat}).")
         else:
-            print("[Refus] Parking COMPLET. Barrière reste fermée.")
-            # Si l'automate n'est pas déjà sur COMPLET, on le force
+            print("[Refus] Parking COMPLET.")
             if self.automate.etat_courant.id_etat != 99:
                 self.automate.transition("parking_plein")
 
-    def gerer_sortie(self, est_abonne=False):
-        """Simule le processus complet de sortie."""
-        print(f"\n--- TENTATIVE DE SORTIE (Abonné: {est_abonne}) ---")
+    def gerer_sortie(self, est_abonne=False, pause_callback=None):
+        print(f"\n--- SORTIE (Abonné: {est_abonne}) ---")
         
-        # ASTUCE SIMULATION : On téléporte l'automate à l'état 4 pour commencer la sortie
-        # (Car dans la réalité, c'est un automate parallèle ou une autre borne)
+        # On s'assure qu'on part bien de l'état STATIONNEMENT
         self.automate.etat_courant = self.automate.list_etats[4]
         
         self.automate.transition("demande_sortie")
+        if pause_callback: pause_callback()
         
         if est_abonne:
-            print("[Système] Abonné détecté : Sortie gratuite.")
             self.automate.transition("abonne_gratuit")
+            print(">> Gratuit (Abonné)")
+            if pause_callback: pause_callback()
         else:
-            print("[Système] Visiteur : Paiement requis.")
             self.automate.transition("paiement_requis")
+            print(">> Paiement requis...")
+            if pause_callback: pause_callback()
+            
+            self.recettes_totales += 15.0
+            
             self.automate.transition("paiement_valide")
+            print(">> Paiement accepté")
+            if pause_callback: pause_callback()
             
         self.automate.transition("vehicule_sorti")
         self.places_libres += 1
-        print(f"[Succès] Véhicule parti. Places restantes: {self.places_libres}")
-        
-        # Si le parking était complet, il redevient disponible
-        # Note: L'automate est déjà revenu à 0 via "vehicule_sorti"
-        if self.places_libres == 1:
-            print("[Info] Parking n'est plus complet.")
