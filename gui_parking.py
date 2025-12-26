@@ -2,11 +2,12 @@ import sys
 import random
 import time
 import networkx as nx
+import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QGridLayout, QLabel, QPushButton, 
-                             QTextEdit, QFrame)
+                             QTextEdit, QFrame, QStackedWidget)
 from PyQt5.QtCore import Qt, pyqtSignal, QObject, QTimer
 from PyQt5.QtGui import QFont
 
@@ -28,10 +29,10 @@ class ParkingWorker(QObject):
         print(message)
 
     def _animation_step(self):
-        """Callback magique pour animer le graphe étape par étape"""
+        """Callback pour animer le graphe étape par étape"""
         self.update_status()          
-        QApplication.processEvents()  # Force le rafraîchissement immédiat
-        time.sleep(0.8)               # Pause visible
+        QApplication.processEvents()  
+        time.sleep(0.8)               
 
     def entree_auto(self, est_abonne):
         if self.system.places_libres > 0:
@@ -69,13 +70,10 @@ class ParkingWorker(QObject):
         self.log(f"--- 🛑 Sortie P-{idx+1} ({nom}). Facture: {prix} ---")
         self.update_grid_signal.emit(idx, -1) # Orange (Paiement)
 
-        # Petit délai pour laisser l'utilisateur voir la case orange
         QTimer.singleShot(500, lambda: self._finaliser_sortie(idx, est_abonne))
 
     def _finaliser_sortie(self, idx, est_abonne):
-        # Lancement de la logique avec animation
         self.system.gerer_sortie(est_abonne=est_abonne, pause_callback=self._animation_step)
-        
         self.occupation_map[idx] = None
         self.update_grid_signal.emit(idx, 1) # Vert
         self.update_status()
@@ -85,41 +83,28 @@ class ParkingWorker(QObject):
         self.status_signal.emit(self.system.get_status())
 
 
-# --- CLASS 2 : FENÊTRE GRAPHIQUE (Layout Schéma Officiel) ---
-class GraphWindow(QWidget):
-    closed = pyqtSignal()
-
+# --- CLASS 2 : WIDGET GRAPHE (Intégré) ---
+class GraphWidget(QWidget):
     def __init__(self, automate):
         super().__init__()
-        self.setWindowTitle("Moniteur Temps Réel (Automate)")
-        self.setGeometry(1150, 50, 1100, 700)
         self.automate = automate
         
-        main_layout = QVBoxLayout()
-        self.setLayout(main_layout)
+        layout = QVBoxLayout()
+        self.setLayout(layout)
+        layout.setContentsMargins(0, 0, 0, 0) # Pas de marges pour bien coller
 
-        self.figure = Figure(figsize=(12, 8), facecolor='#2b2b2b')
+        self.figure = Figure(facecolor='#2b2b2b')
         self.canvas = FigureCanvas(self.figure)
-        main_layout.addWidget(self.canvas)
-        
-        btn_layout = QPushButton("Réinitialiser Vue (Schéma Rectangulaire)")
-        btn_layout.setStyleSheet("background-color: #34495e; color: white; padding: 8px;")
-        btn_layout.clicked.connect(lambda: self.update_layout(force_manual=True))
-        main_layout.addWidget(btn_layout)
+        layout.addWidget(self.canvas)
         
         self.G = nx.DiGraph()
         self.pos = None
         
-        # Noms d'affichage conformes au schéma demandé
         self.labels_map = {
-            "DISPONIBLE": "1. DISPO-\nNIBLE",
-            "IDENTIFICATION": "2. IDENTI-\nFICATION",
-            "VERIFICATION_ACCES": "3. VERIF\nACCÈS",
-            "BARRIERE_ENTREE_OUVERTE": "4. BARRIÈRE\nOUVERTE",
-            "STATIONNEMENT": "5. VÉHICULE\nGARÉ",
-            "CALCUL_TARIF": "6. CALCUL\nTARIF",
-            "ATTENTE_PAIEMENT": "7. ATTENTE\nPAIEMENT",
-            "BARRIERE_SORTIE_OUVERTE": "8. BARRIÈRE\nSORTIE",
+            "DISPONIBLE": "1. DISPO-\nNIBLE", "IDENTIFICATION": "2. IDENTI-\nFICATION",
+            "VERIFICATION_ACCES": "3. VERIF\nACCÈS", "BARRIERE_ENTREE_OUVERTE": "4. BARRIÈRE\nOUVERTE",
+            "STATIONNEMENT": "5. VÉHICULE\nGARÉ", "CALCUL_TARIF": "6. CALCUL\nTARIF",
+            "ATTENTE_PAIEMENT": "7. ATTENTE\nPAIEMENT", "BARRIERE_SORTIE_OUVERTE": "8. BARRIÈRE\nSORTIE",
             "COMPLET": "COMPLET"
         }
         
@@ -129,33 +114,25 @@ class GraphWindow(QWidget):
     def _construire_structure(self):
         for id_etat, etat in self.automate.list_etats.items():
             self.G.add_node(etat.label_etat)
-            
-        for transition in self.automate.list_transitions:
-            src = transition.etat_source.label_etat
-            dst = transition.etat_dest.label_etat
-            
-            lbl = transition.etiquette \
-                .replace("vehicule_", "").replace("barriere_", "").replace("detecter_", "") \
-                .replace("demande_", "").replace("paiement_", "").replace("abonne_", "abonne")
-            
-            if src == "BARRIERE_SORTIE_OUVERTE" and dst == "DISPONIBLE":
-                lbl = "sorti / place_libérée"
-                
+        for t in self.automate.list_transitions:
+            src, dst = t.etat_source.label_etat, t.etat_dest.label_etat
+            lbl = t.etiquette.replace("vehicule_", "").replace("barriere_", "").replace("detecter_", "").replace("paiement_", "").replace("abonne_", "abonne")
+            if src == "BARRIERE_SORTIE_OUVERTE" and dst == "DISPONIBLE": lbl = "sorti/libéré"
             self.G.add_edge(src, dst, label=lbl)
 
     def update_layout(self, force_manual=True):
         if force_manual:
-            # COORDONNÉES EXACTES DU RECTANGLE (X, Y)
+            # Layout espacé pour grandes bulles
             self.pos = {
-                "COMPLET":                  (0.5, 3.0),
-                "DISPONIBLE":               (0.5, 2.0),
-                "IDENTIFICATION":           (2.5, 2.0),
-                "VERIFICATION_ACCES":       (4.5, 2.0),
-                "BARRIERE_ENTREE_OUVERTE":  (6.5, 2.0),
-                "STATIONNEMENT":            (6.5, 0.5),
-                "CALCUL_TARIF":             (4.5, 0.5),
-                "ATTENTE_PAIEMENT":         (2.5, 0.5),
-                "BARRIERE_SORTIE_OUVERTE":  (0.5, 0.5)
+                "COMPLET": (0.5, 6.0), 
+                "DISPONIBLE": (0.5, 3.0),
+                "IDENTIFICATION": (3.5, 3.0), 
+                "VERIFICATION_ACCES": (6.5, 3.0),
+                "BARRIERE_ENTREE_OUVERTE": (9.5, 3.0), 
+                "STATIONNEMENT": (9.5, 0.5),
+                "CALCUL_TARIF": (6.5, 0.5), 
+                "ATTENTE_PAIEMENT": (3.5, 0.5),
+                "BARRIERE_SORTIE_OUVERTE": (0.5, 0.5)
             }
         else:
             self.pos = nx.spring_layout(self.G)
@@ -167,58 +144,61 @@ class GraphWindow(QWidget):
         ax.set_facecolor('#2b2b2b')
 
         node_colors = []
-        edge_colors_list = []
-        
+        edge_colors = []
         for node in self.G.nodes():
             if node == current_label:
-                node_colors.append('#e74c3c') # Rouge vif (Actif)
-                edge_colors_list.append('#c0392b')
+                node_colors.append('#e74c3c') # Rouge Actif
+                edge_colors.append('#c0392b')
             elif node == "COMPLET":
-                node_colors.append('#ffcccc') # Rose
-                edge_colors_list.append('red')
+                node_colors.append('#ffcccc')
+                edge_colors.append('red')
             elif node == "STATIONNEMENT":
-                node_colors.append('#ccffcc') # Vert clair
-                edge_colors_list.append('green')
+                node_colors.append('#ccffcc')
+                edge_colors.append('green')
             elif "BARRIERE" in node:
-                node_colors.append('#ccccff') # Bleu clair
-                edge_colors_list.append('blue')
+                node_colors.append('#ccccff')
+                edge_colors.append('blue')
             else:
-                node_colors.append('#eeeeee') # Blanc
-                edge_colors_list.append('#bdc3c7')
+                node_colors.append('#eeeeee')
+                edge_colors.append('#bdc3c7')
 
-        # Noeuds
+        # 1. Enlarge Nodes & Borders
         nx.draw_networkx_nodes(self.G, self.pos, ax=ax, node_color=node_colors, 
-                               edgecolors=edge_colors_list, linewidths=2, node_size=5000)
-        # Labels
-        nx.draw_networkx_labels(self.G, self.pos, ax=ax, labels=self.labels_map,
-                                font_size=9, font_color="black", font_weight="bold", font_family="Arial")
-        # Flèches
+                               edgecolors=edge_colors, linewidths=3, node_size=8000)
+
+        # 2. Enhance Typography (Labels inside nodes)
+        nx.draw_networkx_labels(self.G, self.pos, ax=ax, labels=self.labels_map, 
+                                font_size=10, font_weight="bold", font_family="Arial")
+
+        # 4. Refine Arrows (Larger width, arrowsize, and margins for borders)
+        # min_source_margin et min_target_margin pour ne pas commencer sous le texte ou le bord
         nx.draw_networkx_edges(self.G, self.pos, ax=ax, edge_color='#ecf0f1', 
-                               arrows=True, arrowsize=25, width=1.5, 
-                               connectionstyle='arc3,rad=0.0', min_source_margin=25, min_target_margin=25)
-        # Texte Flèches
+                               arrows=True, arrowsize=30, width=2.5, 
+                               connectionstyle='arc3,rad=0.0',
+                               min_source_margin=25, min_target_margin=25)
+        
+        # Titres des transitions plus grands
         edge_labels = nx.get_edge_attributes(self.G, 'label')
         nx.draw_networkx_edge_labels(self.G, self.pos, edge_labels=edge_labels, 
-                                     font_color='#f39c12', font_size=8, ax=ax, rotate=False,
+                                     font_color='#f39c12', font_size=9, ax=ax, 
                                      bbox=dict(facecolor='#2b2b2b', edgecolor='none', alpha=0.6))
 
-        ax.set_title(f"ÉTAT ACTIF : {self.labels_map.get(current_label, current_label).replace(chr(10), ' ')}", 
-                     color="white", fontsize=16, fontweight='bold', pad=20)
-        ax.set_xlim(-1, 8)
-        ax.set_ylim(-0.5, 4)
+        # 3. Optimize Layout Spacing (Title & Limits)
+        ax.set_title(f"ÉTAT : {self.labels_map.get(current_label, current_label).replace(chr(10), ' ')}", 
+                     color="white", fontsize=14, fontweight='bold')
+        
+        # Cadrage parfait pour le nouveau layout
+        ax.set_xlim(-1, 11) 
+        ax.set_ylim(-1, 8) 
         ax.axis('off')
         self.canvas.draw()
 
-    def closeEvent(self, event):
-        self.closed.emit()
-        super().closeEvent(event)
 
-
-# --- CLASS 3 : DASHBOARD PRINCIPAL ---
+# --- CLASS 3 : DASHBOARD (Avec Switch) ---
 class ParkingDashboard(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Projet 8 - Dashboard Financier & Technique")
+        self.setWindowTitle("Projet 8 - Dashboard Interactif")
         self.setGeometry(100, 100, 1100, 750)
         self.setStyleSheet("background-color: #2b2b2b; color: white;")
         
@@ -234,9 +214,9 @@ class ParkingDashboard(QMainWindow):
         self.setCentralWidget(main)
         layout = QVBoxLayout(main)
 
-        # HEADER & KPI
+        # 1. HEADER & KPI
         kpi_layout = QHBoxLayout()
-        self.card_money = self.create_kpi_card("RECETTES TOTALES", "0.00 DH", "#f1c40f")
+        self.card_money = self.create_kpi_card("RECETTES", "0.00 DH", "#f1c40f")
         self.card_visit = self.create_kpi_card("VISITEURS", "0", "#3498db")
         self.card_sub = self.create_kpi_card("ABONNÉS", "0", "#9b59b6")
         
@@ -252,7 +232,7 @@ class ParkingDashboard(QMainWindow):
         kpi_layout.addWidget(self.lbl_system_status)
         layout.addLayout(kpi_layout)
 
-        # GRILLE
+        # 2. GRILLE (Toujours visible)
         grid_frame = QFrame()
         grid_frame.setStyleSheet("background-color: #383838; border-radius: 10px; margin: 10px 0;")
         grid_layout = QGridLayout(grid_frame)
@@ -269,97 +249,112 @@ class ParkingDashboard(QMainWindow):
             
         layout.addWidget(grid_frame)
 
-        # CONTROLES
+        # 3. ZONE INFÉRIEURE (Boutons + Zone Swappable)
         bottom = QHBoxLayout()
         btns = QVBoxLayout()
         
+        # Boutons de simulation
         b_visiteur = QPushButton("Ticket Visiteur")
-        b_visiteur.setStyleSheet("background-color: #3498db; padding: 15px; font-weight: bold;")
+        b_visiteur.setStyleSheet("background-color: #3498db; padding: 12px; font-weight: bold;")
         b_visiteur.clicked.connect(lambda: self.worker.entree_auto(False))
         
         b_abonne = QPushButton("Badge Abonné")
-        b_abonne.setStyleSheet("background-color: #9b59b6; padding: 15px; font-weight: bold;")
+        b_abonne.setStyleSheet("background-color: #9b59b6; padding: 12px; font-weight: bold;")
         b_abonne.clicked.connect(lambda: self.worker.entree_auto(True))
         
         b_sortie = QPushButton("Sortie Aléatoire")
-        b_sortie.setStyleSheet("background-color: #e67e22; padding: 15px; font-weight: bold;")
+        b_sortie.setStyleSheet("background-color: #e67e22; padding: 12px; font-weight: bold;")
         b_sortie.clicked.connect(self.worker.sortie_auto)
         
-        self.b_graph = QPushButton("Voir Automate (Graphe)")
-        self.b_graph.setStyleSheet("background-color: #7f8c8d; padding: 15px; font-weight: bold; border: 1px solid white;")
-        self.b_graph.clicked.connect(self.open_graph_window)
+        # --- NOUVEAU BOUTON : SWITCH ---
+        b_switch = QPushButton("🔄 Basculer Logs / Graphe")
+        b_switch.setStyleSheet("background-color: #34495e; padding: 12px; font-weight: bold; border: 1px solid white;")
+        b_switch.clicked.connect(self.toggle_view)
         
         btns.addWidget(b_visiteur)
         btns.addWidget(b_abonne)
         btns.addSpacing(10)
         btns.addWidget(b_sortie)
-        btns.addSpacing(10)
-        btns.addWidget(self.b_graph)
+        btns.addSpacing(20)
+        btns.addWidget(b_switch) # Ajout du bouton switch
         btns.addStretch()
         
+        # --- ZONE MULTIFONCTION (STACK) ---
+        self.stack = QStackedWidget()
+        
+        # Page 0 : Logs
         self.logs = QTextEdit()
         self.logs.setReadOnly(True)
-        self.logs.setStyleSheet("background-color: #222; color: #0f0; font-family: Consolas;")
+        self.logs.setStyleSheet("background-color: #222; color: #0f0; font-family: Consolas; font-size: 11px;")
+        
+        # Page 1 : Graphe
+        self.graph_widget = GraphWidget(self.worker.system.automate)
+        
+        self.stack.addWidget(self.logs)       # Index 0
+        self.stack.addWidget(self.graph_widget) # Index 1
         
         bottom.addLayout(btns, 1)
-        bottom.addWidget(self.logs, 2)
-        layout.addLayout(bottom)
+        bottom.addWidget(self.stack, 3) # La zone stack prend plus de place
+        layout.addLayout(bottom, 1)
 
     def create_kpi_card(self, title, value, color):
         frame = QFrame()
         frame.setStyleSheet(f"background-color: {color}; border-radius: 8px; color: black;")
-        frame.setFixedSize(180, 80)
+        frame.setFixedSize(160, 70)
         vbox = QVBoxLayout(frame)
         l_title = QLabel(title)
         l_title.setFont(QFont("Arial", 8, QFont.Bold))
         l_title.setStyleSheet("color: #333;")
         l_val = QLabel(value)
-        l_val.setFont(QFont("Arial", 18, QFont.Bold))
+        l_val.setFont(QFont("Arial", 16, QFont.Bold))
         l_val.setAlignment(Qt.AlignCenter)
         vbox.addWidget(l_title)
         vbox.addWidget(l_val)
         return frame
 
-    def open_graph_window(self):
-        self.b_graph.setEnabled(False)
-        self.graph_window = GraphWindow(self.worker.system.automate)
-        self.graph_window.closed.connect(lambda: self.b_graph.setEnabled(True))
-        self.graph_window.show()
+    def toggle_view(self):
+        """Change la vue affichée dans le stack (Logs <-> Graphe)"""
+        current = self.stack.currentIndex()
+        if current == 0:
+            self.stack.setCurrentIndex(1) # Montre le Graphe
+        else:
+            self.stack.setCurrentIndex(0) # Montre les Logs
 
     def update_dashboard(self, stats):
-        # KPIs avec findChildren corrigé
+        # Update KPIs
         val_money = stats.get("recettes", 0.0)
         self.card_money.findChildren(QLabel, "", Qt.FindDirectChildrenOnly)[1].setText(f"{val_money:.2f} DH")
         self.card_visit.findChildren(QLabel, "", Qt.FindDirectChildrenOnly)[1].setText(str(stats.get("visiteurs", 0)))
         self.card_sub.findChildren(QLabel, "", Qt.FindDirectChildrenOnly)[1].setText(str(stats.get("abonnes", 0)))
         
-        # État Header
+        # Update Header
         lbl_etat = stats.get("etat_automate", "???")
         self.lbl_system_status.setText(lbl_etat)
         if lbl_etat == "COMPLET":
-            self.lbl_system_status.setStyleSheet("background-color: #e74c3c; padding: 10px; border-radius: 5px;")
+             self.lbl_system_status.setStyleSheet("background-color: #e74c3c; padding: 10px; border-radius: 5px;")
         else:
-            self.lbl_system_status.setStyleSheet("background-color: #2ecc71; padding: 10px; border-radius: 5px;")
+             self.lbl_system_status.setStyleSheet("background-color: #2ecc71; padding: 10px; border-radius: 5px;")
         
-        # Mise à jour Graphe
-        if hasattr(self, 'graph_window') and self.graph_window.isVisible():
-            self.graph_window.draw_graph(lbl_etat)
+        # Update Graphe (même s'il est caché, on le met à jour pour qu'il soit prêt)
+        self.graph_widget.draw_graph(lbl_etat)
 
     def append_log(self, text):
         self.logs.append(text)
         self.logs.verticalScrollBar().setValue(self.logs.verticalScrollBar().maximum())
+        # Optionnel : Si vous voulez que la vue bascule auto sur les logs lors d'un message
+        # self.stack.setCurrentIndex(0) 
 
     def update_place(self, idx, status):
-        lbl_place = self.places_widgets[idx]
+        l = self.places_widgets[idx]
         if status == 1:
-            lbl_place.setStyleSheet("background-color: #2ecc71; color: white; border-radius: 8px;")
-            lbl_place.setText(f"P-{idx+1}\nLIBRE")
+            l.setStyleSheet("background-color: #2ecc71; color: white; border-radius: 8px;")
+            l.setText(f"P-{idx+1}\nLIBRE")
         elif status == 0:
-            lbl_place.setStyleSheet("background-color: #e74c3c; color: white; border-radius: 8px;")
-            lbl_place.setText(f"P-{idx+1}\nOCCUPÉ")
+            l.setStyleSheet("background-color: #e74c3c; color: white; border-radius: 8px;")
+            l.setText(f"P-{idx+1}\nOCCUPÉ")
         elif status == -1:
-            lbl_place.setStyleSheet("background-color: #f39c12; color: white; border-radius: 8px;")
-            lbl_place.setText(f"P-{idx+1}\nPAIEMENT")
+            l.setStyleSheet("background-color: #f39c12; color: white; border-radius: 8px;")
+            l.setText(f"P-{idx+1}\nPAIEMENT")
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
