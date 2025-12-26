@@ -198,9 +198,25 @@ class GraphWidget(QWidget):
 class ParkingDashboard(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Projet 8 - Dashboard Interactif")
-        self.setGeometry(100, 100, 1100, 750)
-        self.setStyleSheet("background-color: #2b2b2b; color: white;")
+        self.setWindowTitle("Projet 8 - Smart City Parking Dashboard")
+        self.setGeometry(100, 100, 1200, 800)
+        # 1. Refined Dark Theme
+        self.setStyleSheet("""
+            QMainWindow { background-color: #0f172a; }
+            QLabel { color: white; font-family: 'Segoe UI', sans-serif; }
+            QPushButton {
+                background-color: #334155;
+                color: white;
+                border: none;
+                padding: 12px;
+                border-radius: 8px;
+                font-family: 'Segoe UI', sans-serif;
+                font-weight: bold;
+                font-size: 14px;
+            }
+            QPushButton:hover { background-color: #475569; }
+            QPushButton:pressed { background-color: #1e293b; }
+        """)
         
         self.worker = ParkingWorker(places_totales=10)
         self.worker.log_signal.connect(self.append_log)
@@ -213,148 +229,208 @@ class ParkingDashboard(QMainWindow):
         main = QWidget()
         self.setCentralWidget(main)
         layout = QVBoxLayout(main)
+        layout.setSpacing(20)
+        layout.setContentsMargins(20, 20, 20, 20)
 
         # 1. HEADER & KPI
         kpi_layout = QHBoxLayout()
-        self.card_money = self.create_kpi_card("RECETTES", "0.00 DH", "#f1c40f")
-        self.card_visit = self.create_kpi_card("VISITEURS", "0", "#3498db")
-        self.card_sub = self.create_kpi_card("ABONNÉS", "0", "#9b59b6")
+        kpi_layout.setSpacing(15)
+        # Colors: Emerald #10b981, Blue #3b82f6, Purple #8b5cf6
+        self.card_money = self.create_kpi_card("RECETTES TOTALES", "0.00 DH", "#f59e0b") # Amber for money
+        self.card_visit = self.create_kpi_card("VISITEURS ACTIFS", "0", "#3b82f6")
+        self.card_sub = self.create_kpi_card("ABONNÉS PRÉSENTS", "0", "#8b5cf6")
         
         self.lbl_system_status = QLabel("DISPONIBLE")
-        self.lbl_system_status.setFont(QFont("Segoe UI", 16, QFont.Bold))
-        self.lbl_system_status.setStyleSheet("background-color: #2ecc71; padding: 10px; border-radius: 5px;")
+        self.lbl_system_status.setFont(QFont("Segoe UI", 14, QFont.Bold))
+        self.lbl_system_status.setStyleSheet("background-color: #10b981; padding: 8px 16px; border-radius: 6px;")
         
         kpi_layout.addWidget(self.card_money)
         kpi_layout.addWidget(self.card_visit)
         kpi_layout.addWidget(self.card_sub)
         kpi_layout.addStretch()
-        kpi_layout.addWidget(QLabel("ÉTAT :"))
-        kpi_layout.addWidget(self.lbl_system_status)
+        
+        status_box = QHBoxLayout()
+        l_stat = QLabel("ÉTAT DU SYSTÈME :")
+        l_stat.setStyleSheet("color: #94a3b8; font-weight: bold;")
+        status_box.addWidget(l_stat)
+        status_box.addWidget(self.lbl_system_status)
+        kpi_layout.addLayout(status_box)
+        
         layout.addLayout(kpi_layout)
 
-        # 2. GRILLE (Toujours visible)
+        # 2. INTERACTIVE PARKING GRID
         grid_frame = QFrame()
-        grid_frame.setStyleSheet("background-color: #383838; border-radius: 10px; margin: 10px 0;")
+        grid_frame.setStyleSheet("background-color: #1e293b; border-radius: 12px;")
         grid_layout = QGridLayout(grid_frame)
+        grid_layout.setSpacing(15)
+        grid_layout.setContentsMargins(15, 15, 15, 15)
         self.places_widgets = []
 
         for i in range(10):
             lbl = QLabel(f"P-{i+1}\nLIBRE")
             lbl.setAlignment(Qt.AlignCenter)
-            lbl.setFixedSize(100, 80)
-            lbl.setFont(QFont("Arial", 10, QFont.Bold))
-            lbl.setStyleSheet("background-color: #2ecc71; color: white; border-radius: 8px;")
+            lbl.setFixedSize(110, 90)
+            lbl.setFont(QFont("Segoe UI", 11, QFont.Bold))
+            # Initial Style: Free (Emerald)
+            lbl.setStyleSheet("""
+                background-color: #10b981; 
+                color: white; 
+                border-radius: 8px;
+                border: 2px solid transparent;
+            """)
             grid_layout.addWidget(lbl, i//5, i%5)
             self.places_widgets.append(lbl)
             
         layout.addWidget(grid_frame)
 
-        # 3. ZONE INFÉRIEURE (Boutons + Zone Swappable)
+        # 3. CONTROLS & MONITORING
         bottom = QHBoxLayout()
         btns = QVBoxLayout()
+        btns.setSpacing(10)
         
-        # Boutons de simulation
-        b_visiteur = QPushButton("Ticket Visiteur")
-        b_visiteur.setStyleSheet("background-color: #3498db; padding: 12px; font-weight: bold;")
+        # Actions Styling
+        btn_style_action = "background-color: #334155; border-left: 4px solid #3b82f6;"
+        
+        b_visiteur = QPushButton("🎫  Ticket Visiteur")
+        b_visiteur.setStyleSheet(f"QPushButton {{ {btn_style_action} }} QPushButton:hover {{ background-color: #475569; }}")
         b_visiteur.clicked.connect(lambda: self.worker.entree_auto(False))
         
-        b_abonne = QPushButton("Badge Abonné")
-        b_abonne.setStyleSheet("background-color: #9b59b6; padding: 12px; font-weight: bold;")
+        b_abonne = QPushButton("💳  Badge Abonné")
+        b_abonne.setStyleSheet(f"QPushButton {{ background-color: #334155; border-left: 4px solid #8b5cf6; }} QPushButton:hover {{ background-color: #475569; }}")
         b_abonne.clicked.connect(lambda: self.worker.entree_auto(True))
         
-        b_sortie = QPushButton("Sortie Aléatoire")
-        b_sortie.setStyleSheet("background-color: #e67e22; padding: 12px; font-weight: bold;")
+        b_sortie = QPushButton("🛑  Sortie Aléatoire")
+        b_sortie.setStyleSheet(f"QPushButton {{ background-color: #334155; border-left: 4px solid #f43f5e; }} QPushButton:hover {{ background-color: #475569; }}")
         b_sortie.clicked.connect(self.worker.sortie_auto)
         
-        # --- NOUVEAU BOUTON : SWITCH ---
-        b_switch = QPushButton("🔄 Basculer Logs / Graphe")
-        b_switch.setStyleSheet("background-color: #34495e; padding: 12px; font-weight: bold; border: 1px solid white;")
+        b_switch = QPushButton("🔄  Vue Console / Graphe")
+        b_switch.setStyleSheet("border: 1px solid #475569;")
         b_switch.clicked.connect(self.toggle_view)
         
         btns.addWidget(b_visiteur)
         btns.addWidget(b_abonne)
-        btns.addSpacing(10)
+        btns.addSpacing(5)
         btns.addWidget(b_sortie)
-        btns.addSpacing(20)
-        btns.addWidget(b_switch) # Ajout du bouton switch
+        btns.addSpacing(15)
+        btns.addWidget(b_switch)
         btns.addStretch()
         
-        # --- ZONE MULTIFONCTION (STACK) ---
+        # Stacked Widget (Console / Graph)
         self.stack = QStackedWidget()
         
-        # Page 0 : Logs
+        # Page 0: Integrated Monitoring Console
         self.logs = QTextEdit()
         self.logs.setReadOnly(True)
-        self.logs.setStyleSheet("background-color: #222; color: #0f0; font-family: Consolas; font-size: 11px;")
+        self.logs.setStyleSheet("""
+            QTextEdit {
+                background-color: rgba(30, 41, 59, 0.7);
+                color: #10b981;
+                font-family: 'Consolas', 'Courier New', monospace;
+                font-size: 13px;
+                border: 1px solid #475569;
+                border-radius: 8px;
+                padding: 10px;
+            }
+        """)
         
-        # Page 1 : Graphe
+        # Page 1: Graph
         self.graph_widget = GraphWidget(self.worker.system.automate)
         
-        self.stack.addWidget(self.logs)       # Index 0
-        self.stack.addWidget(self.graph_widget) # Index 1
+        self.stack.addWidget(self.logs)       
+        self.stack.addWidget(self.graph_widget) 
         
         bottom.addLayout(btns, 1)
-        bottom.addWidget(self.stack, 3) # La zone stack prend plus de place
+        bottom.addWidget(self.stack, 3) 
         layout.addLayout(bottom, 1)
 
-    def create_kpi_card(self, title, value, color):
+    def create_kpi_card(self, title, value, base_color):
         frame = QFrame()
-        frame.setStyleSheet(f"background-color: {color}; border-radius: 8px; color: black;")
-        frame.setFixedSize(160, 70)
+        # 2. Advanced KPI Cards (Gradient & Opacity)
+        # Using qlineargradient in a simplified way via background
+        # Note: Qt stylesheets support linear gradients.
+        frame.setStyleSheet(f"""
+            QFrame {{
+                background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {base_color}, stop:1 #1e293b);
+                border-radius: 10px;
+                border: 1px solid {base_color};
+            }}
+        """)
+        frame.setFixedSize(180, 85)
+        
         vbox = QVBoxLayout(frame)
+        vbox.setContentsMargins(15, 10, 15, 10)
+        
         l_title = QLabel(title)
-        l_title.setFont(QFont("Arial", 8, QFont.Bold))
-        l_title.setStyleSheet("color: #333;")
+        l_title.setFont(QFont("Segoe UI", 9, QFont.Bold))
+        l_title.setStyleSheet("color: white; background: transparent; opacity: 0.7;") # opacity prop for widget? QSS applies to color mostly. handled by rgba
+        l_title.setStyleSheet("color: rgba(255, 255, 255, 180); background: transparent;")
+        
         l_val = QLabel(value)
-        l_val.setFont(QFont("Arial", 16, QFont.Bold))
-        l_val.setAlignment(Qt.AlignCenter)
+        l_val.setFont(QFont("Segoe UI", 18, QFont.Bold))
+        l_val.setStyleSheet("color: white; background: transparent;")
+        l_val.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        
         vbox.addWidget(l_title)
         vbox.addWidget(l_val)
         return frame
 
     def toggle_view(self):
-        """Change la vue affichée dans le stack (Logs <-> Graphe)"""
         current = self.stack.currentIndex()
         if current == 0:
-            self.stack.setCurrentIndex(1) # Montre le Graphe
+            self.stack.setCurrentIndex(1)
         else:
-            self.stack.setCurrentIndex(0) # Montre les Logs
+            self.stack.setCurrentIndex(0)
 
     def update_dashboard(self, stats):
-        # Update KPIs
         val_money = stats.get("recettes", 0.0)
-        self.card_money.findChildren(QLabel, "", Qt.FindDirectChildrenOnly)[1].setText(f"{val_money:.2f} DH")
-        self.card_visit.findChildren(QLabel, "", Qt.FindDirectChildrenOnly)[1].setText(str(stats.get("visiteurs", 0)))
-        self.card_sub.findChildren(QLabel, "", Qt.FindDirectChildrenOnly)[1].setText(str(stats.get("abonnes", 0)))
+        self.card_money.findChildren(QLabel)[1].setText(f"{val_money:.2f} DH")
+        self.card_visit.findChildren(QLabel)[1].setText(str(stats.get("visiteurs", 0)))
+        self.card_sub.findChildren(QLabel)[1].setText(str(stats.get("abonnes", 0)))
         
-        # Update Header
         lbl_etat = stats.get("etat_automate", "???")
         self.lbl_system_status.setText(lbl_etat)
-        if lbl_etat == "COMPLET":
-             self.lbl_system_status.setStyleSheet("background-color: #e74c3c; padding: 10px; border-radius: 5px;")
-        else:
-             self.lbl_system_status.setStyleSheet("background-color: #2ecc71; padding: 10px; border-radius: 5px;")
         
-        # Update Graphe (même s'il est caché, on le met à jour pour qu'il soit prêt)
+        # Color mapping for system status
+        if lbl_etat == "COMPLET":
+             self.lbl_system_status.setStyleSheet("background-color: #f43f5e; padding: 8px 16px; border-radius: 6px;") # Rose
+        else:
+             self.lbl_system_status.setStyleSheet("background-color: #10b981; padding: 8px 16px; border-radius: 6px;") # Emerald
+        
         self.graph_widget.draw_graph(lbl_etat)
 
     def append_log(self, text):
         self.logs.append(text)
         self.logs.verticalScrollBar().setValue(self.logs.verticalScrollBar().maximum())
-        # Optionnel : Si vous voulez que la vue bascule auto sur les logs lors d'un message
-        # self.stack.setCurrentIndex(0) 
 
     def update_place(self, idx, status):
         l = self.places_widgets[idx]
-        if status == 1:
-            l.setStyleSheet("background-color: #2ecc71; color: white; border-radius: 8px;")
+        # 3. Interactive Parking Grid logic
+        if status == 1: # Libre (Emerald)
+            l.setStyleSheet("""
+                background-color: #10b981; 
+                color: white; 
+                border-radius: 8px;
+                border: 2px solid #059669;
+            """)
             l.setText(f"P-{idx+1}\nLIBRE")
-        elif status == 0:
-            l.setStyleSheet("background-color: #e74c3c; color: white; border-radius: 8px;")
-            l.setText(f"P-{idx+1}\nOCCUPÉ")
-        elif status == -1:
-            l.setStyleSheet("background-color: #f39c12; color: white; border-radius: 8px;")
-            l.setText(f"P-{idx+1}\nPAIEMENT")
+            
+        elif status == 0: # Occupé (Rose + Emoji)
+            l.setStyleSheet("""
+                background-color: #f43f5e; 
+                color: white; 
+                border-radius: 8px;
+                border: 2px solid #e11d48;
+            """)
+            l.setText(f"P-{idx+1}\n🚗 OCCUPÉ")
+            
+        elif status == -1: # Paiement (Amber)
+            l.setStyleSheet("""
+                background-color: #f59e0b; 
+                color: white; 
+                border-radius: 8px;
+                border: 2px solid #d97706;
+            """)
+            l.setText(f"P-{idx+1}\n⏳ PAIEMENT")
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
