@@ -348,11 +348,16 @@ class ParkingDashboard(QMainWindow):
         # 2. Advanced KPI Cards (Gradient & Opacity)
         # Using qlineargradient in a simplified way via background
         # Note: Qt stylesheets support linear gradients.
+        # We use .QFrame to target only the container frame, not the child QLabels (which inherit QFrame)
         frame.setStyleSheet(f"""
-            QFrame {{
+            .QFrame {{
                 background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {base_color}, stop:1 #1e293b);
                 border-radius: 10px;
                 border: 1px solid {base_color};
+            }}
+            QLabel {{
+                border: none;
+                background: transparent;
             }}
         """)
         frame.setFixedSize(180, 85)
@@ -362,12 +367,11 @@ class ParkingDashboard(QMainWindow):
         
         l_title = QLabel(title)
         l_title.setFont(QFont("Segoe UI", 9, QFont.Bold))
-        l_title.setStyleSheet("color: white; background: transparent; opacity: 0.7;") # opacity prop for widget? QSS applies to color mostly. handled by rgba
-        l_title.setStyleSheet("color: rgba(255, 255, 255, 180); background: transparent;")
+        l_title.setStyleSheet("color: rgba(255, 255, 255, 180);")
         
         l_val = QLabel(value)
         l_val.setFont(QFont("Segoe UI", 18, QFont.Bold))
-        l_val.setStyleSheet("color: white; background: transparent;")
+        l_val.setStyleSheet("color: white;")
         l_val.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         
         vbox.addWidget(l_title)
