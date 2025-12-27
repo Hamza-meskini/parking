@@ -20,6 +20,17 @@ except ImportError:
 
 from parking_system import ParkingSystem
 
+class ClickableLabel(QLabel):
+    clicked = pyqtSignal(int)
+    def __init__(self, index, text, parent=None):
+        super().__init__(text, parent)
+        self.index = index
+    
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit(self.index)
+        super().mousePressEvent(event)
+
 # --- CLASS 1 : WORKER (Gestion Logique & Animation) ---
 class ParkingWorker(QObject):
     log_signal = pyqtSignal(str)
@@ -86,14 +97,13 @@ class ParkingWorker(QObject):
             self.system.gerer_entree(est_abonne) 
             self.update_status()
 
-    def sortie_auto(self):
-        self.play_sound("click")
-        indices_occupes = [i for i, x in enumerate(self.occupation_map) if x is not None]
-        if not indices_occupes:
-            self.log("[Erreur] Le parking est vide !")
+    def sortie_specifique(self, idx):
+        """Déclenche la sortie pour un slot spécifique"""
+        if self.occupation_map[idx] is None:
+            # Slot vide, on ignore
             return
 
-        idx = random.choice(indices_occupes)
+        self.play_sound("click")
         type_stocke = self.occupation_map[idx]
         est_abonne = (type_stocke == "ABONNE")
         
@@ -106,17 +116,30 @@ class ParkingWorker(QObject):
         nom = "Abonné" if est_abonne else "Visiteur"
         
         self.log(f"--- 🛑 Sortie P-{idx+1} ({nom}). Durée: {int(duration)}s. Facture: {prix_calcule:.2f} DH ---")
+        
+        # STOP TIMER IMMEDIATELY
+        self.entry_times[idx] = None 
+        
         self.update_grid_signal.emit(idx, -1) # Paiement
         self.update_status()
 
         QTimer.singleShot(500, lambda: self._finaliser_sortie(idx, est_abonne, prix_calcule))
+
+    def sortie_auto(self):
+        indices_occupes = [i for i, x in enumerate(self.occupation_map) if x is not None]
+        if not indices_occupes:
+            self.log("[Erreur] Le parking est vide !")
+            return
+
+        idx = random.choice(indices_occupes)
+        self.sortie_specifique(idx)
 
     def _finaliser_sortie(self, idx, est_abonne, prix):
         self.system.gerer_sortie(est_abonne=est_abonne, pause_callback=self._animation_step, montant=prix)
         self.play_sound("success")
         
         self.occupation_map[idx] = None
-        self.entry_times[idx] = None
+        # self.entry_times[idx] = None # Déjà fait dans sortie_specifique pour arrêter le timer
         
         self.update_grid_signal.emit(idx, 1) # Vert
         self.update_status()
@@ -317,15 +340,7 @@ class GraphWidget(QWidget):
                     bbox=dict(facecolor='#f1c40f', alpha=0.9, boxstyle='round,pad=0.5'),
                     fontsize=10, color='black', ha='center')
 
-        # Legend
-        from matplotlib.lines import Line2D
-        legend_elements = [
-            Line2D([0], [0], marker='o', color='w', label='Actif', markerfacecolor='#e74c3c', markersize=10),
-            Line2D([0], [0], color='#3498db', lw=2, linestyle='--', label='Historique'),
-            Line2D([0], [0], color='#ecf0f1', lw=2, label='Transition Possible'),
-            Line2D([0], [0], marker='o', color='w', label='Sélection', markerfacecolor='#f1c40f', markersize=10),
-        ]
-        ax.legend(handles=legend_elements, loc='lower right', facecolor='#2b2b2b', edgecolor='white', labelcolor='white')
+
 
         self.canvas.draw()
 
@@ -425,7 +440,10 @@ class ParkingDashboard(QMainWindow):
 
         for i in range(10):
             # Layout interne pour chaque place (Icon + Text + Timer)
-            lbl = QLabel(f"P-{i+1}\nLIBRE")
+            # Utilisation de ClickableLabel pour interactivité
+            lbl = ClickableLabel(i, f"P-{i+1}\nLIBRE")
+            lbl.clicked.connect(self.worker.sortie_specifique)
+            
             lbl.setAlignment(Qt.AlignCenter)
             lbl.setFixedSize(110, 90)
             lbl.setFont(QFont("Segoe UI", 10, QFont.Bold))
@@ -457,7 +475,7 @@ class ParkingDashboard(QMainWindow):
         b_abonne.setStyleSheet(f"QPushButton {{ background-color: #334155; border-left: 4px solid #8b5cf6; }} QPushButton:hover {{ background-color: #475569; }}")
         b_abonne.clicked.connect(lambda: self.worker.entree_auto(True))
         
-        b_sortie = QPushButton("🛑  Sortie Aléatoire")
+        b_sortie = QPushButton("🛑  Simulation Sortie")
         b_sortie.setStyleSheet(f"QPushButton {{ background-color: #334155; border-left: 4px solid #f43f5e; }} QPushButton:hover {{ background-color: #475569; }}")
         b_sortie.clicked.connect(self.worker.sortie_auto)
         
@@ -572,13 +590,14 @@ class ParkingDashboard(QMainWindow):
                 background-color: #10b981; 
                 color: white; 
                 border-radius: 8px;
-                border: 2px solid #059669;
+                border: 2px solid transparent;
             """)
             l.setText(f"P-{idx+1}\nLIBRE")
+            l.setCursor(Qt.ArrowCursor) # Non cliquable logic
             
         elif status == 0: # Occupé (Rose)
             # Le texte exact avec icône sera géré par la boucle clock si Occupé
-            pass 
+            l.setCursor(Qt.PointingHandCursor) # Cliquable pour sortie
             
         elif status == -1: # Paiement (Amber)
             l.setStyleSheet("""
@@ -588,6 +607,7 @@ class ParkingDashboard(QMainWindow):
                 border: 2px solid #d97706;
             """)
             l.setText(f"P-{idx+1}\n⏳ PAIEMENT")
+            l.setCursor(Qt.ArrowCursor)
 
     def update_clocks(self):
         # 2. Session Timer
@@ -612,7 +632,11 @@ class ParkingDashboard(QMainWindow):
                 icon = "👑" if occ_type == "ABONNE" else "🚗"
                 
                 # Mise à jour texte
-                txt = f"P-{idx+1} | {icon}\n{hh:02d}:{mm:02d}:{ss:02d}"
+                txt = (f"<div style='text-align: center;'>"
+                       f"<span style='font-size:10pt; font-weight:bold;'>P-{idx+1}</span> "
+                       f"<span style='font-size:16pt;'>{icon}</span><br>"
+                       f"<span style='font-size:11pt; font-family:Consolas; font-weight:bold;'>{hh:02d}:{mm:02d}:{ss:02d}</span>"
+                       f"</div>")
                 widget.setText(txt)
                 
                 # Assurer le style Occupé (au cas où update_place n'a pas tout set)
@@ -621,7 +645,6 @@ class ParkingDashboard(QMainWindow):
                     color: white; 
                     border-radius: 8px;
                     border: 2px solid #e11d48;
-                    font-size: 11px;
                 """)
 
 if __name__ == "__main__":
