@@ -1,62 +1,113 @@
-import sys
+# Bibliothèques standard
 import random
+import sys
 import time
-import networkx as nx
+from typing import Dict, List, Optional
+
+# Bibliothèques tierces
 import matplotlib.pyplot as plt
+import networkx as nx
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
-from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
-                             QHBoxLayout, QGridLayout, QLabel, QPushButton, 
-                             QTextEdit, QFrame, QStackedWidget)
-from PyQt5.QtCore import Qt, pyqtSignal, QObject, QTimer, QDateTime, QTime
+from PyQt5.QtCore import Qt, QObject, QTimer, pyqtSignal
 from PyQt5.QtGui import QFont
+from PyQt5.QtWidgets import (
+    QApplication,
+    QFrame,
+    QGridLayout,
+    QHBoxLayout,
+    QLabel,
+    QMainWindow,
+    QPushButton,
+    QStackedWidget,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
+)
+
 try:
     from PyQt5.QtMultimedia import QSound
 except ImportError:
     class QSound:
         @staticmethod
-        def play(path):
-            QApplication.beep() # Fallback
+        def play(path: str) -> None:
+            QApplication.beep()
 
+# Imports locaux
 from parking_system import ParkingSystem
 
+
+# ==================== CONSTANTES ====================
+# Animation et timing
+DELAI_ANIMATION = 0.8  # Secondes entre chaque étape d'animation
+DELAI_PAIEMENT = 500   # Millisecondes avant finalisation sortie
+
+# Couleurs UI (Tailwind-inspired)
+COULEUR_EMERALD = "#10b981"    # Places libres, succès
+COULEUR_ROSE = "#f43f5e"       # Places occupées
+COULEUR_AMBER = "#f59e0b"      # Paiement en cours, recettes
+COULEUR_BLUE = "#3b82f6"       # Visiteurs, éléments interactifs
+COULEUR_PURPLE = "#8b5cf6"     # Abonnés
+COULEUR_SLATE_DARK = "#0f172a" # Fond principal
+COULEUR_SLATE_MID = "#1e293b"  # Fond secondaire
+COULEUR_SLATE_LIGHT = "#334155" # Boutons
+
+# Tailles des widgets
+TAILLE_SLOT_WIDTH = 110
+TAILLE_SLOT_HEIGHT = 90
+TAILLE_KPI_CARD_WIDTH = 180
+TAILLE_KPI_CARD_HEIGHT = 85
+
+# ==================== CLASSES ====================
+
 class ClickableLabel(QLabel):
+    """Label cliquable pour les slots de parking."""
+    
     clicked = pyqtSignal(int)
-    def __init__(self, index, text, parent=None):
+    
+    def __init__(self, index: int, text: str, parent: Optional[QWidget] = None) -> None:
         super().__init__(text, parent)
         self.index = index
     
-    def mousePressEvent(self, event):
+    def mousePressEvent(self, event) -> None:
         if event.button() == Qt.LeftButton:
             self.clicked.emit(self.index)
         super().mousePressEvent(event)
 
-# --- CLASS 1 : WORKER (Gestion Logique & Animation) ---
 class ParkingWorker(QObject):
+    """
+    Gestion de la logique métier et des animations du parking.
+    
+    Signals:
+        log_signal: Émet les messages de log
+        status_signal: Émet les mises à jour de statut
+        update_grid_signal: Émet les changements d'état des slots (index, status)
+    """
+    
     log_signal = pyqtSignal(str)
-    status_signal = pyqtSignal(dict) 
-    update_grid_signal = pyqtSignal(int, int) # int=index, int=status (-1, 0, 1)
+    status_signal = pyqtSignal(dict)
+    update_grid_signal = pyqtSignal(int, int)
 
-    def __init__(self, places_totales=10):
+    def __init__(self, places_totales: int = 10) -> None:
         super().__init__()
         self.system = ParkingSystem(places_totales=places_totales)
-        self.occupation_map = [None] * places_totales 
-        self.entry_times = [None] * places_totales
-        self.history_states = ["DISPONIBLE"]
+        self.occupation_map: List[Optional[str]] = [None] * places_totales
+        self.entry_times: List[Optional[float]] = [None] * places_totales
+        self.history_states: List[str] = ["DISPONIBLE"]
 
-    def log(self, message):
+    def log(self, message: str) -> None:
+        """Émet un message de log."""
         self.log_signal.emit(message)
         print(message)
 
-    def _animation_step(self):
-        """Callback pour animer le graphe étape par étape"""
-        self.update_status()          
-        QApplication.processEvents()  
-        time.sleep(0.8)               
+    def _animation_step(self) -> None:
+        """Callback pour animer le graphe étape par étape."""
+        self.update_status()
+        QApplication.processEvents()
+        time.sleep(DELAI_ANIMATION)               
 
-    def play_sound(self, sound_type):
-        """Joue un son selon le type d'événement"""
-        # Mapping des sons (suppose que les fichiers existent ou fallback beep)
+    def play_sound(self, sound_type: str) -> None:
+        """Joue un son selon le type d'événement."""
         sounds = {
             "success": "sounds/success.wav",
             "warning": "sounds/warning.wav",
@@ -68,64 +119,59 @@ class ParkingWorker(QObject):
         else:
             QApplication.beep()
 
-    def entree_auto(self, est_abonne):
+    def entree_auto(self, est_abonne: bool) -> None:
+        """Gère l'entrée automatique d'un véhicule."""
         self.play_sound("click")
-        # Reset history on new entry attempt if we are at start
         if self.system.automate.etat_courant.label_etat == "DISPONIBLE":
-             self.history_states = ["DISPONIBLE"]
+            self.history_states = ["DISPONIBLE"]
 
         if self.system.places_libres > 0:
             try:
                 idx = self.occupation_map.index(None)
                 type_client = "ABONNE" if est_abonne else "VISITEUR"
                 
-                # Animation de l'entrée
                 self.system.gerer_entree(est_abonne=est_abonne, pause_callback=self._animation_step)
                 
                 self.occupation_map[idx] = type_client
-                self.entry_times[idx] = time.time() # Enregistre l'heure d'entrée
+                self.entry_times[idx] = time.time()
                 
                 icon = "👑" if est_abonne else "🚗"
                 self.log(f"--- {icon} Entrée {type_client} (Place P-{idx+1}) ---")
                 
-                self.update_grid_signal.emit(idx, 0) # Occupé
+                self.update_grid_signal.emit(idx, 0)
                 self.update_status()
             except ValueError:
                 self.log("Erreur interne place.")
         else:
             self.play_sound("warning")
-            self.system.gerer_entree(est_abonne) 
+            self.system.gerer_entree(est_abonne)
             self.update_status()
 
-    def sortie_specifique(self, idx):
-        """Déclenche la sortie pour un slot spécifique"""
+    def sortie_specifique(self, idx: int) -> None:
+        """Déclenche la sortie pour un slot spécifique."""
         if self.occupation_map[idx] is None:
-            # Slot vide, on ignore
             return
 
         self.play_sound("click")
         type_stocke = self.occupation_map[idx]
         est_abonne = (type_stocke == "ABONNE")
         
-        # Calcul Durée/Prix
         start_time = self.entry_times[idx]
         duration = time.time() - start_time if start_time else 0
-        # Prix fictif : 5 DH fixe + 0.5 DH par seconde (pour la démo)
         prix_calcule = 0.0 if est_abonne else (5.0 + duration * 0.5)
 
         nom = "Abonné" if est_abonne else "Visiteur"
-        
         self.log(f"--- 🛑 Sortie P-{idx+1} ({nom}). Durée: {int(duration)}s. Facture: {prix_calcule:.2f} DH ---")
         
-        # STOP TIMER IMMEDIATELY
-        self.entry_times[idx] = None 
+        self.entry_times[idx] = None
         
-        self.update_grid_signal.emit(idx, -1) # Paiement
+        self.update_grid_signal.emit(idx, -1)
         self.update_status()
 
-        QTimer.singleShot(500, lambda: self._finaliser_sortie(idx, est_abonne, prix_calcule))
+        QTimer.singleShot(DELAI_PAIEMENT, lambda: self._finaliser_sortie(idx, est_abonne, prix_calcule))
 
-    def sortie_auto(self):
+    def sortie_auto(self) -> None:
+        """Simule une sortie aléatoire."""
         indices_occupes = [i for i, x in enumerate(self.occupation_map) if x is not None]
         if not indices_occupes:
             self.log("[Erreur] Le parking est vide !")
@@ -134,62 +180,60 @@ class ParkingWorker(QObject):
         idx = random.choice(indices_occupes)
         self.sortie_specifique(idx)
 
-    def _finaliser_sortie(self, idx, est_abonne, prix):
+    def _finaliser_sortie(self, idx: int, est_abonne: bool, prix: float) -> None:
+        """Finalise la sortie après le paiement."""
         self.system.gerer_sortie(est_abonne=est_abonne, pause_callback=self._animation_step, montant=prix)
         self.play_sound("success")
         
         self.occupation_map[idx] = None
-        # self.entry_times[idx] = None # Déjà fait dans sortie_specifique pour arrêter le timer
         
-        self.update_grid_signal.emit(idx, 1) # Vert
+        self.update_grid_signal.emit(idx, 1)
         self.update_status()
         self.log("--- ✅ Barrière ouverte ---")
 
-    def update_status(self):
+    def update_status(self) -> None:
+        """Met à jour le statut et émet le signal."""
         status = self.system.get_status()
         current_state = status["etat_automate"]
         
-        # Update History
         if not self.history_states or self.history_states[-1] != current_state:
             self.history_states.append(current_state)
-            
-        # Clean history if simple reset loop
-        if current_state == "DISPONIBLE" and len(self.history_states) > 2:
-             # Keep it but maybe trim if too long? For now let's just let it be, 
-             # entree_auto resets it.
-             pass
 
         status["history"] = self.history_states
         self.status_signal.emit(status)
 
 
-# --- CLASS 2 : WIDGET GRAPHE (Intégré) ---
 class GraphWidget(QWidget):
-    def __init__(self, automate):
+    """Widget d'affichage du graphe de l'automate."""
+    
+    def __init__(self, automate) -> None:
         super().__init__()
         self.automate = automate
         
         layout = QVBoxLayout()
         self.setLayout(layout)
-        layout.setContentsMargins(0, 0, 0, 0) # Pas de marges pour bien coller
+        layout.setContentsMargins(0, 0, 0, 0)
 
         self.figure = Figure(facecolor='#2b2b2b')
         self.canvas = FigureCanvas(self.figure)
         layout.addWidget(self.canvas)
         
-        # Interaction
         self.canvas.mpl_connect('button_press_event', self.on_click)
-        self.selected_node = None
+        self.selected_node: Optional[str] = None
         self.tooltip_annot = None
         
         self.G = nx.DiGraph()
-        self.pos = None
+        self.pos: Optional[Dict] = None
         
         self.labels_map = {
-            "DISPONIBLE": "1. DISPO-\nNIBLE", "IDENTIFICATION": "2. IDENTI-\nFICATION",
-            "VERIFICATION_ACCES": "3. VERIF\nACCÈS", "BARRIERE_ENTREE_OUVERTE": "4. BARRIÈRE\nOUVERTE",
-            "STATIONNEMENT": "5. VÉHICULE\nGARÉ", "CALCUL_TARIF": "6. CALCUL\nTARIF",
-            "ATTENTE_PAIEMENT": "7. ATTENTE\nPAIEMENT", "BARRIERE_SORTIE_OUVERTE": "8. BARRIÈRE\nSORTIE",
+            "DISPONIBLE": "1. DISPO-\nNIBLE",
+            "IDENTIFICATION": "2. IDENTI-\nFICATION",
+            "VERIFICATION_ACCES": "3. VERIF\nACCÈS",
+            "BARRIERE_ENTREE_OUVERTE": "4. BARRIÈRE\nOUVERTE",
+            "STATIONNEMENT": "5. VÉHICULE\nGARÉ",
+            "CALCUL_TARIF": "6. CALCUL\nTARIF",
+            "ATTENTE_PAIEMENT": "7. ATTENTE\nPAIEMENT",
+            "BARRIERE_SORTIE_OUVERTE": "8. BARRIÈRE\nSORTIE",
             "COMPLET": "COMPLET"
         }
         
@@ -345,22 +389,21 @@ class GraphWidget(QWidget):
         self.canvas.draw()
 
 
-# --- CLASS 3 : DASHBOARD (Avec Switch) ---
 class ParkingDashboard(QMainWindow):
-    def __init__(self):
+    """Interface principale du tableau de bord de parking."""
+    
+    def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("Projet 8 - Smart City Parking Dashboard")
         self.setGeometry(100, 100, 1200, 800)
         
-        # Clocks variables
         self.simulation_start = time.time()
         
-        # 1. Refined Dark Theme
-        self.setStyleSheet("""
-            QMainWindow { background-color: #0f172a; }
-            QLabel { color: white; font-family: 'Segoe UI', sans-serif; }
-            QPushButton {
-                background-color: #334155;
+        self.setStyleSheet(f"""
+            QMainWindow {{ background-color: {COULEUR_SLATE_DARK}; }}
+            QLabel {{ color: white; font-family: 'Segoe UI', sans-serif; }}
+            QPushButton {{
+                background-color: {COULEUR_SLATE_LIGHT};
                 color: white;
                 border: none;
                 padding: 12px;
@@ -368,9 +411,9 @@ class ParkingDashboard(QMainWindow):
                 font-family: 'Segoe UI', sans-serif;
                 font-weight: bold;
                 font-size: 14px;
-            }
-            QPushButton:hover { background-color: #475569; }
-            QPushButton:pressed { background-color: #1e293b; }
+            }}
+            QPushButton:hover {{ background-color: #475569; }}
+            QPushButton:pressed {{ background-color: {COULEUR_SLATE_MID}; }}
         """)
         
         self.worker = ParkingWorker(places_totales=10)
@@ -380,10 +423,9 @@ class ParkingDashboard(QMainWindow):
         
         self.init_ui()
         
-        # Timers
         self.timer_clock = QTimer(self)
         self.timer_clock.timeout.connect(self.update_clocks)
-        self.timer_clock.start(1000) # Every 1s update clocks & slots
+        self.timer_clock.start(1000)
 
     def init_ui(self):
         main = QWidget()
@@ -392,12 +434,11 @@ class ParkingDashboard(QMainWindow):
         layout.setSpacing(20)
         layout.setContentsMargins(20, 20, 20, 20)
 
-        # --- HEADER SUPERIEUR (CLOCKS) ---
         header_top = QHBoxLayout()
         
         self.lbl_sim_time = QLabel("⏱ SESSION: 00:00")
         self.lbl_sim_time.setFont(QFont("Segoe UI", 12, QFont.Bold))
-        self.lbl_sim_time.setStyleSheet("color: #3b82f6; background-color: #1e293b; padding: 5px 10px; border-radius: 5px;")
+        self.lbl_sim_time.setStyleSheet(f"color: {COULEUR_BLUE}; background-color: {COULEUR_SLATE_MID}; padding: 5px 10px; border-radius: 5px;")
 
         header_top.addStretch()
         header_top.addWidget(self.lbl_sim_time)
@@ -407,14 +448,13 @@ class ParkingDashboard(QMainWindow):
         # 1. KPI SECTION
         kpi_layout = QHBoxLayout()
         kpi_layout.setSpacing(15)
-        # Colors: Emerald #10b981, Blue #3b82f6, Purple #8b5cf6
-        self.card_money = self.create_kpi_card("RECETTES TOTALES", "0.00 DH", "#f59e0b") # Amber for money
-        self.card_visit = self.create_kpi_card("VISITEURS ACTIFS", "0", "#3b82f6")
-        self.card_sub = self.create_kpi_card("ABONNÉS PRÉSENTS", "0", "#8b5cf6")
+        self.card_money = self.create_kpi_card("RECETTES TOTALES", "0.00 DH", COULEUR_AMBER)
+        self.card_visit = self.create_kpi_card("VISITEURS ACTIFS", "0", COULEUR_BLUE)
+        self.card_sub = self.create_kpi_card("ABONNÉS PRÉSENTS", "0", COULEUR_PURPLE)
         
         self.lbl_system_status = QLabel("DISPONIBLE")
         self.lbl_system_status.setFont(QFont("Segoe UI", 14, QFont.Bold))
-        self.lbl_system_status.setStyleSheet("background-color: #10b981; padding: 8px 16px; border-radius: 6px;")
+        self.lbl_system_status.setStyleSheet(f"background-color: {COULEUR_EMERALD}; padding: 8px 16px; border-radius: 6px;")
         
         kpi_layout.addWidget(self.card_money)
         kpi_layout.addWidget(self.card_visit)
@@ -432,7 +472,7 @@ class ParkingDashboard(QMainWindow):
 
         # 2. INTERACTIVE PARKING GRID
         grid_frame = QFrame()
-        grid_frame.setStyleSheet("background-color: #1e293b; border-radius: 12px;")
+        grid_frame.setStyleSheet(f"background-color: {COULEUR_SLATE_MID}; border-radius: 12px;")
         grid_layout = QGridLayout(grid_frame)
         grid_layout.setSpacing(15)
         grid_layout.setContentsMargins(15, 15, 15, 15)
@@ -445,11 +485,10 @@ class ParkingDashboard(QMainWindow):
             lbl.clicked.connect(self.worker.sortie_specifique)
             
             lbl.setAlignment(Qt.AlignCenter)
-            lbl.setFixedSize(110, 90)
+            lbl.setFixedSize(TAILLE_SLOT_WIDTH, TAILLE_SLOT_HEIGHT)
             lbl.setFont(QFont("Segoe UI", 10, QFont.Bold))
-            # Initial Style: Free (Emerald)
-            lbl.setStyleSheet("""
-                background-color: #10b981; 
+            lbl.setStyleSheet(f"""
+                background-color: {COULEUR_EMERALD}; 
                 color: white; 
                 border-radius: 8px;
                 border: 2px solid transparent;
@@ -464,19 +503,16 @@ class ParkingDashboard(QMainWindow):
         btns = QVBoxLayout()
         btns.setSpacing(10)
         
-        # Actions Styling
-        btn_style_action = "background-color: #334155; border-left: 4px solid #3b82f6;"
-        
         b_visiteur = QPushButton("🎫  Ticket Visiteur")
-        b_visiteur.setStyleSheet(f"QPushButton {{ {btn_style_action} }} QPushButton:hover {{ background-color: #475569; }}")
+        b_visiteur.setStyleSheet(f"QPushButton {{ background-color: {COULEUR_SLATE_LIGHT}; border-left: 4px solid {COULEUR_BLUE}; }} QPushButton:hover {{ background-color: #475569; }}")
         b_visiteur.clicked.connect(lambda: self.worker.entree_auto(False))
         
         b_abonne = QPushButton("💳  Badge Abonné")
-        b_abonne.setStyleSheet(f"QPushButton {{ background-color: #334155; border-left: 4px solid #8b5cf6; }} QPushButton:hover {{ background-color: #475569; }}")
+        b_abonne.setStyleSheet(f"QPushButton {{ background-color: {COULEUR_SLATE_LIGHT}; border-left: 4px solid {COULEUR_PURPLE}; }} QPushButton:hover {{ background-color: #475569; }}")
         b_abonne.clicked.connect(lambda: self.worker.entree_auto(True))
         
         b_sortie = QPushButton("🛑  Simulation Sortie")
-        b_sortie.setStyleSheet(f"QPushButton {{ background-color: #334155; border-left: 4px solid #f43f5e; }} QPushButton:hover {{ background-color: #475569; }}")
+        b_sortie.setStyleSheet(f"QPushButton {{ background-color: {COULEUR_SLATE_LIGHT}; border-left: 4px solid {COULEUR_ROSE}; }} QPushButton:hover {{ background-color: #475569; }}")
         b_sortie.clicked.connect(self.worker.sortie_auto)
         
         b_switch = QPushButton("🔄  Vue Console / Graphe")
@@ -519,13 +555,12 @@ class ParkingDashboard(QMainWindow):
         bottom.addWidget(self.stack, 3) 
         layout.addLayout(bottom, 1)
 
-    def create_kpi_card(self, title, value, base_color):
+    def create_kpi_card(self, title: str, value: str, base_color: str) -> QFrame:
+        """Crée une carte KPI avec gradient."""
         frame = QFrame()
-        # 2. Advanced KPI Cards (Gradient & Opacity)
-        # We use .QFrame to target only the container frame, not the child QLabels (which inherit QFrame)
         frame.setStyleSheet(f"""
             .QFrame {{
-                background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {base_color}, stop:1 #1e293b);
+                background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {base_color}, stop:1 {COULEUR_SLATE_MID});
                 border-radius: 10px;
                 border: 1px solid {base_color};
             }}
@@ -534,7 +569,7 @@ class ParkingDashboard(QMainWindow):
                 background: transparent;
             }}
         """)
-        frame.setFixedSize(180, 85)
+        frame.setFixedSize(TAILLE_KPI_CARD_WIDTH, TAILLE_KPI_CARD_HEIGHT)
         
         vbox = QVBoxLayout(frame)
         vbox.setContentsMargins(15, 10, 15, 10)
@@ -568,11 +603,10 @@ class ParkingDashboard(QMainWindow):
         lbl_etat = stats.get("etat_automate", "???")
         self.lbl_system_status.setText(lbl_etat)
         
-        # Color mapping for system status
         if lbl_etat == "COMPLET":
-             self.lbl_system_status.setStyleSheet("background-color: #f43f5e; padding: 8px 16px; border-radius: 6px;") # Rose
+            self.lbl_system_status.setStyleSheet(f"background-color: {COULEUR_ROSE}; padding: 8px 16px; border-radius: 6px;")
         else:
-             self.lbl_system_status.setStyleSheet("background-color: #10b981; padding: 8px 16px; border-radius: 6px;") # Emerald
+            self.lbl_system_status.setStyleSheet(f"background-color: {COULEUR_EMERALD}; padding: 8px 16px; border-radius: 6px;")
         
         history = stats.get("history", [])
         self.graph_widget.draw_graph(lbl_etat, history)
@@ -581,27 +615,26 @@ class ParkingDashboard(QMainWindow):
         self.logs.append(text)
         self.logs.verticalScrollBar().setValue(self.logs.verticalScrollBar().maximum())
 
-    def update_place(self, idx, status):
-        # Cette fonction change le style de base, les timers sont mis à jour par update_clocks
+    def update_place(self, idx: int, status: int) -> None:
+        """Met à jour l'affichage d'un slot de parking."""
         l = self.places_widgets[idx]
         
-        if status == 1: # Libre (Emerald)
-            l.setStyleSheet("""
-                background-color: #10b981; 
+        if status == 1:
+            l.setStyleSheet(f"""
+                background-color: {COULEUR_EMERALD}; 
                 color: white; 
                 border-radius: 8px;
                 border: 2px solid transparent;
             """)
             l.setText(f"P-{idx+1}\nLIBRE")
-            l.setCursor(Qt.ArrowCursor) # Non cliquable logic
+            l.setCursor(Qt.ArrowCursor)
             
-        elif status == 0: # Occupé (Rose)
-            # Le texte exact avec icône sera géré par la boucle clock si Occupé
-            l.setCursor(Qt.PointingHandCursor) # Cliquable pour sortie
+        elif status == 0:
+            l.setCursor(Qt.PointingHandCursor)
             
-        elif status == -1: # Paiement (Amber)
-            l.setStyleSheet("""
-                background-color: #f59e0b; 
+        elif status == -1:
+            l.setStyleSheet(f"""
+                background-color: {COULEUR_AMBER}; 
                 color: white; 
                 border-radius: 8px;
                 border: 2px solid #d97706;
@@ -609,13 +642,12 @@ class ParkingDashboard(QMainWindow):
             l.setText(f"P-{idx+1}\n⏳ PAIEMENT")
             l.setCursor(Qt.ArrowCursor)
 
-    def update_clocks(self):
-        # 2. Session Timer
+    def update_clocks(self) -> None:
+        """Met à jour les horloges et les timers des slots."""
         elapsed = time.time() - self.simulation_start
         m, s = divmod(int(elapsed), 60)
         self.lbl_sim_time.setText(f"⏱ SESSION: {m:02d}:{s:02d}")
         
-        # 3. Update Slot Timers
         current_time = time.time()
         for idx in range(10):
             entry = self.worker.entry_times[idx]
@@ -623,15 +655,12 @@ class ParkingDashboard(QMainWindow):
             widget = self.places_widgets[idx]
             
             if entry is not None and occ_type is not None:
-                # Calcul durée
                 duration_sec = int(current_time - entry)
                 mm, ss = divmod(duration_sec, 60)
                 hh, mm = divmod(mm, 60)
                 
-                # Icon
                 icon = "👑" if occ_type == "ABONNE" else "🚗"
                 
-                # Mise à jour texte
                 txt = (f"<div style='text-align: center;'>"
                        f"<span style='font-size:10pt; font-weight:bold;'>P-{idx+1}</span> "
                        f"<span style='font-size:16pt;'>{icon}</span><br>"
@@ -639,9 +668,8 @@ class ParkingDashboard(QMainWindow):
                        f"</div>")
                 widget.setText(txt)
                 
-                # Assurer le style Occupé (au cas où update_place n'a pas tout set)
-                widget.setStyleSheet("""
-                    background-color: #f43f5e; 
+                widget.setStyleSheet(f"""
+                    background-color: {COULEUR_ROSE}; 
                     color: white; 
                     border-radius: 8px;
                     border: 2px solid #e11d48;
