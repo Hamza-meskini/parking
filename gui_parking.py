@@ -8,8 +8,15 @@ from matplotlib.figure import Figure
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QGridLayout, QLabel, QPushButton, 
                              QTextEdit, QFrame, QStackedWidget)
-from PyQt5.QtCore import Qt, pyqtSignal, QObject, QTimer
+from PyQt5.QtCore import Qt, pyqtSignal, QObject, QTimer, QDateTime, QTime
 from PyQt5.QtGui import QFont
+try:
+    from PyQt5.QtMultimedia import QSound
+except ImportError:
+    class QSound:
+        @staticmethod
+        def play(path):
+            QApplication.beep() # Fallback
 
 from parking_system import ParkingSystem
 
@@ -23,6 +30,8 @@ class ParkingWorker(QObject):
         super().__init__()
         self.system = ParkingSystem(places_totales=places_totales)
         self.occupation_map = [None] * places_totales 
+        self.entry_times = [None] * places_totales
+        self.history_states = ["DISPONIBLE"]
 
     def log(self, message):
         self.log_signal.emit(message)
@@ -34,27 +43,51 @@ class ParkingWorker(QObject):
         QApplication.processEvents()  
         time.sleep(0.8)               
 
+    def play_sound(self, sound_type):
+        """Joue un son selon le type d'événement"""
+        # Mapping des sons (suppose que les fichiers existent ou fallback beep)
+        sounds = {
+            "success": "sounds/success.wav",
+            "warning": "sounds/warning.wav",
+            "click": "sounds/click.wav"
+        }
+        path = sounds.get(sound_type)
+        if path:
+            QSound.play(path)
+        else:
+            QApplication.beep()
+
     def entree_auto(self, est_abonne):
+        self.play_sound("click")
+        # Reset history on new entry attempt if we are at start
+        if self.system.automate.etat_courant.label_etat == "DISPONIBLE":
+             self.history_states = ["DISPONIBLE"]
+
         if self.system.places_libres > 0:
             try:
                 idx = self.occupation_map.index(None)
                 type_client = "ABONNE" if est_abonne else "VISITEUR"
                 
-                # Animation de l'entrée (le graphe va bouger)
+                # Animation de l'entrée
                 self.system.gerer_entree(est_abonne=est_abonne, pause_callback=self._animation_step)
                 
                 self.occupation_map[idx] = type_client
-                self.log(f"--- 🚗 Entrée {type_client} (Place P-{idx+1}) ---")
+                self.entry_times[idx] = time.time() # Enregistre l'heure d'entrée
                 
-                self.update_grid_signal.emit(idx, 0) # Rouge
+                icon = "👑" if est_abonne else "🚗"
+                self.log(f"--- {icon} Entrée {type_client} (Place P-{idx+1}) ---")
+                
+                self.update_grid_signal.emit(idx, 0) # Occupé
                 self.update_status()
             except ValueError:
                 self.log("Erreur interne place.")
         else:
+            self.play_sound("warning")
             self.system.gerer_entree(est_abonne) 
             self.update_status()
 
     def sortie_auto(self):
+        self.play_sound("click")
         indices_occupes = [i for i, x in enumerate(self.occupation_map) if x is not None]
         if not indices_occupes:
             self.log("[Erreur] Le parking est vide !")
@@ -63,24 +96,48 @@ class ParkingWorker(QObject):
         idx = random.choice(indices_occupes)
         type_stocke = self.occupation_map[idx]
         est_abonne = (type_stocke == "ABONNE")
+        
+        # Calcul Durée/Prix
+        start_time = self.entry_times[idx]
+        duration = time.time() - start_time if start_time else 0
+        # Prix fictif : 5 DH fixe + 0.5 DH par seconde (pour la démo)
+        prix_calcule = 0.0 if est_abonne else (5.0 + duration * 0.5)
 
         nom = "Abonné" if est_abonne else "Visiteur"
-        prix = "0.00 DH" if est_abonne else "15.00 DH"
         
-        self.log(f"--- 🛑 Sortie P-{idx+1} ({nom}). Facture: {prix} ---")
-        self.update_grid_signal.emit(idx, -1) # Orange (Paiement)
+        self.log(f"--- 🛑 Sortie P-{idx+1} ({nom}). Durée: {int(duration)}s. Facture: {prix_calcule:.2f} DH ---")
+        self.update_grid_signal.emit(idx, -1) # Paiement
+        self.update_status()
 
-        QTimer.singleShot(500, lambda: self._finaliser_sortie(idx, est_abonne))
+        QTimer.singleShot(500, lambda: self._finaliser_sortie(idx, est_abonne, prix_calcule))
 
-    def _finaliser_sortie(self, idx, est_abonne):
-        self.system.gerer_sortie(est_abonne=est_abonne, pause_callback=self._animation_step)
+    def _finaliser_sortie(self, idx, est_abonne, prix):
+        self.system.gerer_sortie(est_abonne=est_abonne, pause_callback=self._animation_step, montant=prix)
+        self.play_sound("success")
+        
         self.occupation_map[idx] = None
+        self.entry_times[idx] = None
+        
         self.update_grid_signal.emit(idx, 1) # Vert
         self.update_status()
         self.log("--- ✅ Barrière ouverte ---")
 
     def update_status(self):
-        self.status_signal.emit(self.system.get_status())
+        status = self.system.get_status()
+        current_state = status["etat_automate"]
+        
+        # Update History
+        if not self.history_states or self.history_states[-1] != current_state:
+            self.history_states.append(current_state)
+            
+        # Clean history if simple reset loop
+        if current_state == "DISPONIBLE" and len(self.history_states) > 2:
+             # Keep it but maybe trim if too long? For now let's just let it be, 
+             # entree_auto resets it.
+             pass
+
+        status["history"] = self.history_states
+        self.status_signal.emit(status)
 
 
 # --- CLASS 2 : WIDGET GRAPHE (Intégré) ---
@@ -97,6 +154,11 @@ class GraphWidget(QWidget):
         self.canvas = FigureCanvas(self.figure)
         layout.addWidget(self.canvas)
         
+        # Interaction
+        self.canvas.mpl_connect('button_press_event', self.on_click)
+        self.selected_node = None
+        self.tooltip_annot = None
+        
         self.G = nx.DiGraph()
         self.pos = None
         
@@ -106,6 +168,18 @@ class GraphWidget(QWidget):
             "STATIONNEMENT": "5. VÉHICULE\nGARÉ", "CALCUL_TARIF": "6. CALCUL\nTARIF",
             "ATTENTE_PAIEMENT": "7. ATTENTE\nPAIEMENT", "BARRIERE_SORTIE_OUVERTE": "8. BARRIÈRE\nSORTIE",
             "COMPLET": "COMPLET"
+        }
+        
+        self.state_info = {
+            "DISPONIBLE": "Le système est prêt à accueillir un véhicule. (Attente détection)",
+            "IDENTIFICATION": "Lecture de la plaque ou du badge d'abonné.",
+            "VERIFICATION_ACCES": "Vérification des droits d'accès dans la base de données.",
+            "BARRIERE_ENTREE_OUVERTE": "Accès autorisé, la barrière s'ouvre.",
+            "STATIONNEMENT": "Véhicule garé. Le système surveille la place.",
+            "CALCUL_TARIF": "Calcul du montant à payer selon la durée.",
+            "ATTENTE_PAIEMENT": "Le conducteur doit régler le montant affiché.",
+            "BARRIERE_SORTIE_OUVERTE": "Paiement validé (ou gratuit), sortie autorisée.",
+            "COMPLET": "Aucune place disponible. Entrée bloquée."
         }
         
         self._construire_structure()
@@ -124,31 +198,60 @@ class GraphWidget(QWidget):
         if force_manual:
             # Layout espacé pour grandes bulles
             self.pos = {
-                "COMPLET": (0.5, 6.0), 
-                "DISPONIBLE": (0.5, 3.0),
-                "IDENTIFICATION": (3.5, 3.0), 
-                "VERIFICATION_ACCES": (6.5, 3.0),
-                "BARRIERE_ENTREE_OUVERTE": (9.5, 3.0), 
-                "STATIONNEMENT": (9.5, 0.5),
-                "CALCUL_TARIF": (6.5, 0.5), 
-                "ATTENTE_PAIEMENT": (3.5, 0.5),
-                "BARRIERE_SORTIE_OUVERTE": (0.5, 0.5)
+                "COMPLET": (0.0, 8.0), 
+                "DISPONIBLE": (0.0, 4.0),
+                "IDENTIFICATION": (4.0, 4.0), 
+                "VERIFICATION_ACCES": (8.0, 4.0),
+                "BARRIERE_ENTREE_OUVERTE": (12.0, 4.0), 
+                "STATIONNEMENT": (12.0, 0.0),
+                "CALCUL_TARIF": (8.0, 0.0), 
+                "ATTENTE_PAIEMENT": (4.0, 0.0),
+                "BARRIERE_SORTIE_OUVERTE": (0.0, 0.0)
             }
         else:
             self.pos = nx.spring_layout(self.G)
         self.draw_graph("DISPONIBLE")
+        
+    def on_click(self, event):
+        if event.inaxes is None: return
+        # Trouver le noeud le plus proche
+        min_dist = float('inf')
+        closest = None
+        for node, (x, y) in self.pos.items():
+            dist = (x - event.xdata)**2 + (y - event.ydata)**2
+            if dist < min_dist:
+                min_dist = dist
+                closest = node
+        
+        if closest and min_dist < 1.0: # Seuil de clic
+            self.selected_node = closest if self.selected_node != closest else None
+            # On redessine avec l'état courant stocké (hack: on ne l'a pas ici, on suppose DISPONIBLE ou on attend refresh)
+            # Mieux : on stocke last_label et last_history
+            if hasattr(self, 'last_label'):
+                self.draw_graph(self.last_label, getattr(self, 'last_history', []))
 
-    def draw_graph(self, current_label):
+    def draw_graph(self, current_label, history=[]):
+        self.last_label = current_label
+        self.last_history = history
+        
         self.figure.clear()
         ax = self.figure.add_subplot(111)
         ax.set_facecolor('#2b2b2b')
 
         node_colors = []
         edge_colors = []
+        node_sizes = []
+        
         for node in self.G.nodes():
+            size = 5000
+            
             if node == current_label:
                 node_colors.append('#e74c3c') # Rouge Actif
                 edge_colors.append('#c0392b')
+            elif node == self.selected_node:
+                node_colors.append('#f1c40f') # Selection (Jaune)
+                edge_colors.append('#f39c12')
+                size = 5500 # Slightly bigger
             elif node == "COMPLET":
                 node_colors.append('#ffcccc')
                 edge_colors.append('red')
@@ -161,36 +264,69 @@ class GraphWidget(QWidget):
             else:
                 node_colors.append('#eeeeee')
                 edge_colors.append('#bdc3c7')
+            
+            node_sizes.append(size)
 
-        # 1. Enlarge Nodes & Borders
+        # 1. Draw Nodes
         nx.draw_networkx_nodes(self.G, self.pos, ax=ax, node_color=node_colors, 
-                               edgecolors=edge_colors, linewidths=3, node_size=8000)
+                               edgecolors=edge_colors, linewidths=3, node_size=node_sizes)
 
-        # 2. Enhance Typography (Labels inside nodes)
+        # 2. Labels inside nodes
         nx.draw_networkx_labels(self.G, self.pos, ax=ax, labels=self.labels_map, 
-                                font_size=10, font_weight="bold", font_family="Arial")
+                                font_size=9, font_weight="bold", font_family="Arial")
 
-        # 4. Refine Arrows (Larger width, arrowsize, and margins for borders)
-        # min_source_margin et min_target_margin pour ne pas commencer sous le texte ou le bord
+        # 3. Draw Edges (Historical vs Normal)
+        # Identify historical edges
+        hist_edges = []
+        for i in range(len(history) - 1):
+            u, v = history[i], history[i+1]
+            if self.G.has_edge(u, v):
+                hist_edges.append((u, v))
+                
+        # Draw all edges first (default style)
         nx.draw_networkx_edges(self.G, self.pos, ax=ax, edge_color='#ecf0f1', 
-                               arrows=True, arrowsize=30, width=2.5, 
+                               arrows=True, arrowsize=25, width=2.0, 
                                connectionstyle='arc3,rad=0.0',
-                               min_source_margin=25, min_target_margin=25)
+                               min_source_margin=20, min_target_margin=20)
         
-        # Titres des transitions plus grands
+        # Overdraw historical edges (Dashed, Blue)
+        if hist_edges:
+            nx.draw_networkx_edges(self.G, self.pos, ax=ax, edgelist=hist_edges,
+                                   edge_color='#3498db', style='dashed', alpha=0.8,
+                                   arrows=True, arrowsize=25, width=2.5,
+                                   connectionstyle='arc3,rad=0.0',
+                                   min_source_margin=20, min_target_margin=20)
+
+        # Edge Labels
         edge_labels = nx.get_edge_attributes(self.G, 'label')
         nx.draw_networkx_edge_labels(self.G, self.pos, edge_labels=edge_labels, 
-                                     font_color='#f39c12', font_size=9, ax=ax, 
+                                     font_color='#f39c12', font_size=8, ax=ax, 
                                      bbox=dict(facecolor='#2b2b2b', edgecolor='none', alpha=0.6))
 
-        # 3. Optimize Layout Spacing (Title & Limits)
+        # Title & Limits
         ax.set_title(f"ÉTAT : {self.labels_map.get(current_label, current_label).replace(chr(10), ' ')}", 
                      color="white", fontsize=14, fontweight='bold')
-        
-        # Cadrage parfait pour le nouveau layout
-        ax.set_xlim(-1, 11) 
-        ax.set_ylim(-1, 8) 
+        ax.set_xlim(-2, 14) 
+        ax.set_ylim(-2, 10) 
         ax.axis('off')
+        
+        # Tooltip for selected node
+        if self.selected_node:
+            info = self.state_info.get(self.selected_node, "Pas d'info.")
+            ax.text(6, 9, f"INFO ({self.selected_node}):\n{info}", 
+                    bbox=dict(facecolor='#f1c40f', alpha=0.9, boxstyle='round,pad=0.5'),
+                    fontsize=10, color='black', ha='center')
+
+        # Legend
+        from matplotlib.lines import Line2D
+        legend_elements = [
+            Line2D([0], [0], marker='o', color='w', label='Actif', markerfacecolor='#e74c3c', markersize=10),
+            Line2D([0], [0], color='#3498db', lw=2, linestyle='--', label='Historique'),
+            Line2D([0], [0], color='#ecf0f1', lw=2, label='Transition Possible'),
+            Line2D([0], [0], marker='o', color='w', label='Sélection', markerfacecolor='#f1c40f', markersize=10),
+        ]
+        ax.legend(handles=legend_elements, loc='lower right', facecolor='#2b2b2b', edgecolor='white', labelcolor='white')
+
         self.canvas.draw()
 
 
@@ -200,6 +336,10 @@ class ParkingDashboard(QMainWindow):
         super().__init__()
         self.setWindowTitle("Projet 8 - Smart City Parking Dashboard")
         self.setGeometry(100, 100, 1200, 800)
+        
+        # Clocks variables
+        self.simulation_start = time.time()
+        
         # 1. Refined Dark Theme
         self.setStyleSheet("""
             QMainWindow { background-color: #0f172a; }
@@ -224,6 +364,11 @@ class ParkingDashboard(QMainWindow):
         self.worker.update_grid_signal.connect(self.update_place)
         
         self.init_ui()
+        
+        # Timers
+        self.timer_clock = QTimer(self)
+        self.timer_clock.timeout.connect(self.update_clocks)
+        self.timer_clock.start(1000) # Every 1s update clocks & slots
 
     def init_ui(self):
         main = QWidget()
@@ -232,7 +377,19 @@ class ParkingDashboard(QMainWindow):
         layout.setSpacing(20)
         layout.setContentsMargins(20, 20, 20, 20)
 
-        # 1. HEADER & KPI
+        # --- HEADER SUPERIEUR (CLOCKS) ---
+        header_top = QHBoxLayout()
+        
+        self.lbl_sim_time = QLabel("⏱ SESSION: 00:00")
+        self.lbl_sim_time.setFont(QFont("Segoe UI", 12, QFont.Bold))
+        self.lbl_sim_time.setStyleSheet("color: #3b82f6; background-color: #1e293b; padding: 5px 10px; border-radius: 5px;")
+
+        header_top.addStretch()
+        header_top.addWidget(self.lbl_sim_time)
+        
+        layout.addLayout(header_top)
+        
+        # 1. KPI SECTION
         kpi_layout = QHBoxLayout()
         kpi_layout.setSpacing(15)
         # Colors: Emerald #10b981, Blue #3b82f6, Purple #8b5cf6
@@ -267,10 +424,11 @@ class ParkingDashboard(QMainWindow):
         self.places_widgets = []
 
         for i in range(10):
+            # Layout interne pour chaque place (Icon + Text + Timer)
             lbl = QLabel(f"P-{i+1}\nLIBRE")
             lbl.setAlignment(Qt.AlignCenter)
             lbl.setFixedSize(110, 90)
-            lbl.setFont(QFont("Segoe UI", 11, QFont.Bold))
+            lbl.setFont(QFont("Segoe UI", 10, QFont.Bold))
             # Initial Style: Free (Emerald)
             lbl.setStyleSheet("""
                 background-color: #10b981; 
@@ -346,8 +504,6 @@ class ParkingDashboard(QMainWindow):
     def create_kpi_card(self, title, value, base_color):
         frame = QFrame()
         # 2. Advanced KPI Cards (Gradient & Opacity)
-        # Using qlineargradient in a simplified way via background
-        # Note: Qt stylesheets support linear gradients.
         # We use .QFrame to target only the container frame, not the child QLabels (which inherit QFrame)
         frame.setStyleSheet(f"""
             .QFrame {{
@@ -400,15 +556,17 @@ class ParkingDashboard(QMainWindow):
         else:
              self.lbl_system_status.setStyleSheet("background-color: #10b981; padding: 8px 16px; border-radius: 6px;") # Emerald
         
-        self.graph_widget.draw_graph(lbl_etat)
+        history = stats.get("history", [])
+        self.graph_widget.draw_graph(lbl_etat, history)
 
     def append_log(self, text):
         self.logs.append(text)
         self.logs.verticalScrollBar().setValue(self.logs.verticalScrollBar().maximum())
 
     def update_place(self, idx, status):
+        # Cette fonction change le style de base, les timers sont mis à jour par update_clocks
         l = self.places_widgets[idx]
-        # 3. Interactive Parking Grid logic
+        
         if status == 1: # Libre (Emerald)
             l.setStyleSheet("""
                 background-color: #10b981; 
@@ -418,14 +576,9 @@ class ParkingDashboard(QMainWindow):
             """)
             l.setText(f"P-{idx+1}\nLIBRE")
             
-        elif status == 0: # Occupé (Rose + Emoji)
-            l.setStyleSheet("""
-                background-color: #f43f5e; 
-                color: white; 
-                border-radius: 8px;
-                border: 2px solid #e11d48;
-            """)
-            l.setText(f"P-{idx+1}\n🚗 OCCUPÉ")
+        elif status == 0: # Occupé (Rose)
+            # Le texte exact avec icône sera géré par la boucle clock si Occupé
+            pass 
             
         elif status == -1: # Paiement (Amber)
             l.setStyleSheet("""
@@ -435,6 +588,41 @@ class ParkingDashboard(QMainWindow):
                 border: 2px solid #d97706;
             """)
             l.setText(f"P-{idx+1}\n⏳ PAIEMENT")
+
+    def update_clocks(self):
+        # 2. Session Timer
+        elapsed = time.time() - self.simulation_start
+        m, s = divmod(int(elapsed), 60)
+        self.lbl_sim_time.setText(f"⏱ SESSION: {m:02d}:{s:02d}")
+        
+        # 3. Update Slot Timers
+        current_time = time.time()
+        for idx in range(10):
+            entry = self.worker.entry_times[idx]
+            occ_type = self.worker.occupation_map[idx]
+            widget = self.places_widgets[idx]
+            
+            if entry is not None and occ_type is not None:
+                # Calcul durée
+                duration_sec = int(current_time - entry)
+                mm, ss = divmod(duration_sec, 60)
+                hh, mm = divmod(mm, 60)
+                
+                # Icon
+                icon = "👑" if occ_type == "ABONNE" else "🚗"
+                
+                # Mise à jour texte
+                txt = f"P-{idx+1} | {icon}\n{hh:02d}:{mm:02d}:{ss:02d}"
+                widget.setText(txt)
+                
+                # Assurer le style Occupé (au cas où update_place n'a pas tout set)
+                widget.setStyleSheet("""
+                    background-color: #f43f5e; 
+                    color: white; 
+                    border-radius: 8px;
+                    border: 2px solid #e11d48;
+                    font-size: 11px;
+                """)
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

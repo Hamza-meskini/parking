@@ -97,7 +97,7 @@ class ParkingSystem:
             if self.automate.etat_courant.id_etat != 99:
                 self.automate.transition("parking_plein")
 
-    def gerer_sortie(self, est_abonne=False, pause_callback=None):
+    def gerer_sortie(self, est_abonne=False, pause_callback=None, montant=15.0):
         print(f"\n--- SORTIE (Abonné: {est_abonne}) ---")
         
         self.automate.etat_courant = self.automate.list_etats[4]
@@ -111,10 +111,10 @@ class ParkingSystem:
             if pause_callback: pause_callback()
         else:
             self.automate.transition("paiement_requis")
-            print(">> Paiement requis...")
+            print(f">> Paiement requis ({montant:.2f} DH)...")
             if pause_callback: pause_callback()
             
-            self.recettes_totales += 15.0
+            self.recettes_totales += montant
             
             self.automate.transition("paiement_valide")
             print(">> Paiement accepté")
