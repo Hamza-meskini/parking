@@ -63,7 +63,7 @@ Le projet est structuré autour du modèle MVC (Modèle-Vue-Contrôleur) simplif
 Assurez-vous d'avoir Python installé. Installez ensuite les dépendances nécessaires :
 
 ```bash
-pip install PyQt5 matplotlib networkx graphviz numpy pandas pyyaml pytest coverage pylint
+pip install PyQt5 matplotlib networkx pytest coverage pylint
 ```
 *(Ou utilisez `pip install -r requirements.txt` si disponible)*
 
